@@ -11,6 +11,7 @@ venv/
 .env
 node_modules/
 *.tgz
+*.docx
 .terraform/
 *.tfplan
 .terraform.tfstate*
