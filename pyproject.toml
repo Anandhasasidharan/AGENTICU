@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agenticu"
+version = "0.1.0"
+description = "Multi-Agent Observability & Auto-Recovery"
+readme = "README.md"
+license = "MIT"
+authors = [
+    {name = "AgentICU Contributors"},
+]
+keywords = [
+    "multi-agent", "observability", "llm", "agent", "monitoring",
+    "opentelemetry", "mast-failure-taxonomy", "auto-recovery",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Monitoring",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "opentelemetry-api>=1.30",
+    "opentelemetry-sdk>=1.30",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pyyaml>=6.0",
+    "prometheus-client>=0.21",
+    "httpx>=0.28",
+]
+
+[project.scripts]
+agenticu = "agenticu.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/agenticu/agenticu"
+Repository = "https://github.com/agenticu/agenticu"
+Documentation = "https://github.com/agenticu/agenticu#readme"
+
+[project.optional-dependencies]
+classifier = ["sentence-transformers>=3.4"]
+postgres = ["asyncpg>=0.30"]
+tui = ["textual>=0.86"]
+all = ["agenticu[classifier,postgres,tui]"]
+dev = [
+    "pytest>=9",
+    "pytest-asyncio>=1.4",
+    "httpx>=0.28",
+    "ruff>=0.15",
+    "pre-commit>=4",
+    "vulture>=2.14",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
