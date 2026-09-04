@@ -1,0 +1,31 @@
+{
+  "name": "agenticu",
+  "version": "0.1.0",
+  "description": "Multi-Agent Observability & Auto-Recovery — terminal UI ops console included",
+  "license": "MIT",
+  "homepage": "https://github.com/agenticu/agenticu#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenticu/agenticu.git"
+  },
+  "keywords": [
+    "multi-agent",
+    "observability",
+    "llm",
+    "agent",
+    "monitoring",
+    "tui",
+    "opentelemetry"
+  ],
+  "bin": {
+    "agenticu": "./bin/agenticu.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
