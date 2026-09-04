@@ -1,0 +1,10 @@
+{
+  "alert": "AgentICU Failure Escalation",
+  "expr": "agenticu_failures_total[5m] > 5",
+  "for": "2m",
+  "labels": {"severity": "critical"},
+  "annotations": {
+    "summary": "High failure rate detected",
+    "description": "More than 5 agent failures in the last 5 minutes"
+  }
+}

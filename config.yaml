@@ -1,0 +1,33 @@
+agenticu:
+  storage:
+    dsn: "postgresql://localhost:5432/agenticu"
+    pool_size: 10
+    max_overflow: 20
+
+  collector:
+    otlp_endpoint: "http://localhost:4317"
+    batch_size: 100
+    flush_interval_seconds: 5
+
+  classifier:
+    enabled: true
+    fast_path_only: false
+    model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    similarity_threshold: 0.75
+
+  recovery:
+    auto_recover: true
+    max_retries: 2
+    escalate_after: 2
+    cooldown_seconds: 30
+
+  escalation:
+    slack_webhook: ""
+    pagerduty_key: ""
+    pagerduty_service_id: ""
+
+  api:
+    host: "0.0.0.0"
+    port: 8000
+    cors_origins: ["http://localhost:3000"]
+    api_key: ""

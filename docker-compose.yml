@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: agenticu
+      POSTGRES_USER: agenticu
+      POSTGRES_PASSWORD: agenticu
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenticu"]
+      interval: 5s
+      retries: 5
+
+  agenticu:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      AGENTICU__STORAGE__DSN: "postgresql://agenticu:agenticu@postgres:5432/agenticu"
+      AGENTICU__API__HOST: "0.0.0.0"
+      AGENTICU__API__PORT: "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./src/agenticu/dashboard/grafana_dashboard.json:/etc/grafana/provisioning/dashboards/agenticu.json
+      - ./src/agenticu/dashboard/grafana_dashboard.json:/etc/grafana/provisioning/dashboards/agenticu.json:ro
+
+volumes:
+  pgdata:
+  grafana-data:

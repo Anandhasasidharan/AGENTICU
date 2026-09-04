@@ -1,0 +1,66 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "AgentICU",
+  "panels": [
+    {
+      "title": "Failure Heatmap",
+      "type": "heatmap",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "rate(agenticu_failures_total[5m])",
+          "legendFormat": "{{mode}} - {{agent_id}}"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "title": "Recovery Rate",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(agenticu_recovery_success) / sum(agenticu_recovery_total)"
+        }
+      ],
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 8}
+    },
+    {
+      "title": "Recovery Attempts by Mode",
+      "type": "barchart",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by(mode) (agenticu_recovery_total)",
+          "legendFormat": "{{mode}}"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 8, "x": 4, "y": 8}
+    },
+    {
+      "title": "Agent Health",
+      "type": "table",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by(agent_id) (agenticu_agent_spans)",
+          "legendFormat": "{{agent_id}}"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+    },
+    {
+      "title": "Alert Timeline",
+      "type": "logs",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "agenticu_failures_total",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "alert": "AgentICU Escalation Required",
+  "expr": "agenticu_recovery_total{mode!=\"\"} - agenticu_recovery_success{mode!=\"\"} > 2",
+  "for": "1m",
+  "labels": {"severity": "critical", "pagerduty": "true"},
+  "annotations": {
+    "summary": "Auto-recovery failed—human intervention needed",
+    "description": "Multiple recovery attempts failed for the same failure mode"
+  }
+}
