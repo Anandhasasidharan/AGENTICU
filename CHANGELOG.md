@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- Headless test suite for the Textual ops console (`tests/test_tui_app.py`):
+  all six tabs, every button handler and error branch, plus one `respx`-backed
+  test that drives the app through the real HTTP client
+
 ## [0.1.1] — 2026-10-16
 
 ### Fixed
