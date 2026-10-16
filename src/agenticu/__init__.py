@@ -1,4 +1,4 @@
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from agenticu.attribution.causal_attributor import CausalAttributor
 from agenticu.context import get_current_span_id, get_current_trace_id

@@ -9,6 +9,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from starlette.status import HTTP_403_FORBIDDEN
 
+from agenticu import __version__
 from agenticu.attribution.causal_attributor import CausalAttributor
 from agenticu.collector.storage import TraceStore
 from agenticu.forecast.forecaster import Forecaster
@@ -56,7 +57,7 @@ def create_app(
         if outcome_tracker:
             await outcome_tracker.stop()
 
-    app = FastAPI(title="AgentICU", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AgentICU", version=__version__, lifespan=lifespan)
 
     origins = cors_origins or ["http://localhost:3000"]
     app.add_middleware(

@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here.
 
+## [0.1.1] — 2026-10-16
+
+### Fixed
+- Corrected the Homepage / Repository / Documentation URLs in the published
+  package metadata (they pointed at a non-existent GitHub repository)
+- Config env-var overrides are type-coerced (`AGENTICU__API__PORT` becomes an
+  `int`) and no longer mutate the shared defaults; `AGENTICU_CONFIG` is no longer
+  treated as a nested override
+- `examples/research_agent.py` (bare `@tool_call`, closure scoping) and
+  `examples/failure_injection.py` (now actually classifies and recovers) run
+  cleanly
+
+### Changed
+- Package version is single-sourced from `agenticu.__version__`; it is no longer
+  duplicated in `pyproject.toml` or the FastAPI app
+
 ## [0.1.0] — 2026-10-16
 
 First public release.
@@ -46,12 +62,6 @@ First public release.
   retried exactly once)
 - `@trace` records span ids as hex strings so causal attribution can match
   stored spans
-- Config env-var overrides are type-coerced (`AGENTICU__API__PORT` becomes an
-  `int`) and no longer mutate the shared defaults; `AGENTICU_CONFIG` is no longer
-  treated as a nested override
-- `examples/research_agent.py` (bare `@tool_call`, closure scoping) and
-  `examples/failure_injection.py` (now actually classifies and recovers) run
-  cleanly
 - `TraceProcessor` dedup set is per-instance; the OTel exporter converts
   nanosecond timestamps
 
