@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
-    cfg: dict[str, Any] = dict(DEFAULT_CONFIG)
+    cfg: dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
     path = path or os.environ.get("AGENTICU_CONFIG", str(DEFAULT_CONFIG_PATH))
     p = Path(path)
     if p.exists():
@@ -56,7 +57,7 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
             overrides = yaml.safe_load(f) or {}
         _deep_merge(cfg, overrides)
     for key in os.environ:
-        if key.startswith("AGENTICU_"):
+        if key.startswith("AGENTICU_") and key != "AGENTICU_CONFIG":
             env_key = key.removeprefix("AGENTICU_").lower().lstrip("_")
             _set_from_env(cfg.setdefault("agenticu", {}), env_key, os.environ[key])
     return cfg
@@ -75,4 +76,38 @@ def _set_from_env(cfg: dict[str, Any], env_key: str, value: str) -> None:
     target = cfg
     for part in parts[:-1]:
         target = target.setdefault(part, {})
-    target[parts[-1]] = value
+    key = parts[-1]
+    existing = target.get(key)
+    target[key] = _coerce(value, existing)
+
+
+def _coerce(value: str, existing: Any) -> Any:
+    """Coerce an env-var string to the type of the existing default value."""
+    if isinstance(existing, bool):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(existing, int):
+        try:
+            return int(value)
+        except ValueError:
+            return value
+    if isinstance(existing, float):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    if existing is None:
+        return _infer(value)
+    return value
+
+
+def _infer(value: str) -> Any:
+    """Infer a type for an env var that has no matching default."""
+    low = value.strip().lower()
+    if low in {"true", "false"}:
+        return low == "true"
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except ValueError:
+            pass
+    return value

@@ -5,8 +5,8 @@ Thanks for your interest! AgentICU is in early alpha — every contribution coun
 ## Development Setup
 
 ```bash
-git clone https://github.com/yourname/agenticu
-cd agenticu
+git clone https://github.com/Anandhasasidharan/AGENTICU
+cd AGENTICU
 python -m venv venv && source venv/bin/activate
 pip install -e ".[dev,classifier,postgres]"
 ```

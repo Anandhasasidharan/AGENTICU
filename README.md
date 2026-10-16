@@ -1,6 +1,6 @@
 # AgentICU — Multi-Agent Observability & Auto-Recovery
 
-[![Tests](https://github.com/agenticu/agenticu/actions/workflows/ci.yml/badge.svg)](https://github.com/agenticu/agenticu/actions/workflows/ci.yml)
+[![Tests](https://github.com/Anandhasasidharan/AGENTICU/actions/workflows/ci.yml/badge.svg)](https://github.com/Anandhasasidharan/AGENTICU/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agenticu)](https://pypi.org/project/agenticu/)
 [![Python](https://img.shields.io/pypi/pyversions/agenticu)](https://pypi.org/project/agenticu/)
 
@@ -222,7 +222,7 @@ See `config.yaml`. Override via environment variables (`AGENTICU__{SECTION}__{KE
 ## Development
 
 ```bash
-git clone https://github.com/agenticu/agenticu
+git clone https://github.com/Anandhasasidharan/AGENTICU
 cd agenticu
 pip install -e ".[dev,all]"
 pytest tests/ -v

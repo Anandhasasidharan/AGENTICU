@@ -46,8 +46,14 @@ First public release.
   retried exactly once)
 - `@trace` records span ids as hex strings so causal attribution can match
   stored spans
-- Config env-var overrides nest under `agenticu`; `TraceProcessor` dedup set is
-  per-instance; the OTel exporter converts nanosecond timestamps
+- Config env-var overrides are type-coerced (`AGENTICU__API__PORT` becomes an
+  `int`) and no longer mutate the shared defaults; `AGENTICU_CONFIG` is no longer
+  treated as a nested override
+- `examples/research_agent.py` (bare `@tool_call`, closure scoping) and
+  `examples/failure_injection.py` (now actually classifies and recovers) run
+  cleanly
+- `TraceProcessor` dedup set is per-instance; the OTel exporter converts
+  nanosecond timestamps
 
 ### Removed
 - Dead code: never-incremented Prometheus counters, unused helpers and fixtures

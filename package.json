@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "description": "Multi-Agent Observability & Auto-Recovery — terminal UI ops console included",
   "license": "MIT",
-  "homepage": "https://github.com/agenticu/agenticu#readme",
+  "homepage": "https://github.com/Anandhasasidharan/AGENTICU#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agenticu/agenticu.git"
+    "url": "https://github.com/Anandhasasidharan/AGENTICU.git"
   },
   "keywords": [
     "multi-agent",

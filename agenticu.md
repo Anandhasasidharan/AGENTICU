@@ -320,7 +320,7 @@ agenticu/
 │   └── test_tui_client.py               # 10 tests: TUI HTTP client, error mapping
 └── examples/
     ├── research_agent.py                # LangGraph research agent with AgentICU decorators
-    ├── failure_injection.py             # Demo: auto-recovery from tool timeouts and API 500s
+    ├── failure_injection.py             # Demo: classify + auto-recover from agent failures
     └── failure_scenarios.yaml           # Test data: known failure traces from MAST paper
 ```
 
@@ -333,7 +333,7 @@ agenticu/
 - Converted all 14 playbooks from bare `bool` to `RecoveryAction` with meaningful instructions
 - Wired inline recovery into `@trace(classifier=..., store=...)` — catch → classify → playbook → retry
 - Updated `PlaybookRunner` to handle `RecoveryAction` return type
-- Demo: `examples/failure_injection.py` shows auto-recovery from tool timeouts and API 500s
+- Demo: `examples/failure_injection.py` shows inline auto-recovery from classified agent failures (step repetition, task derailment)
 
 ### Phase 2: Infrastructure
 - `schema.sql` — PostgreSQL tables: spans, failures, recovery_attempts with proper indexes

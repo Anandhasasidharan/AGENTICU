@@ -40,9 +40,9 @@ dependencies = [
 agenticu = "agenticu.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/agenticu/agenticu"
-Repository = "https://github.com/agenticu/agenticu"
-Documentation = "https://github.com/agenticu/agenticu#readme"
+Homepage = "https://github.com/Anandhasasidharan/AGENTICU"
+Repository = "https://github.com/Anandhasasidharan/AGENTICU"
+Documentation = "https://github.com/Anandhasasidharan/AGENTICU#readme"
 
 [project.optional-dependencies]
 classifier = ["sentence-transformers>=3.4"]

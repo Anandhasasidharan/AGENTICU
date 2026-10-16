@@ -25,7 +25,7 @@ async def search_web(query: str) -> str:
     return f"Search results for '{query}': [simulated result 1, result 2, result 3]"
 
 
-@tool_call
+@tool_call()
 async def summarize(text: str, max_words: int = 50) -> str:
     """Simulate summarization."""
     await asyncio.sleep(0.05)
@@ -66,16 +66,15 @@ def run_research(query: str) -> dict[str, Any]:
     In production, this would use StateGraph from langgraph.
     The decorators emit OTel spans regardless of the orchestration framework.
     """
-    import asyncio
-
     from agenticu.context import ContextScope
     from agenticu.models import AgentContext
 
-    state: dict[str, Any] = {"query": query}
-
     async def pipeline() -> dict[str, Any]:
-        ctx = AgentContext(agent_id="research_pipeline", attributes={"framework": "langgraph"})
+        ctx = AgentContext(
+            agent_id="research_pipeline", attributes={"framework": "langgraph"}
+        )
         with ContextScope(ctx):
+            state: dict[str, Any] = {"query": query}
             state = await research_agent(state)
             state = await summarize_agent(state)
             return state
