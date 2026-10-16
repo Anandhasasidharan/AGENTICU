@@ -2,35 +2,52 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## [0.1.0] — 2026-10-16
+
+First public release.
 
 ### Added
-- Initial project scaffold (SDK, collector, classifier, recovery, API)
-- 14 MAST failure mode playbooks (specification, coordination, verification)
-- Inline recovery via `@trace(classifier=..., store=...)` decorator
-- CLI: `agenticu server`, `agenticu migrate`, `agenticu check`
-- Dockerfile + docker-compose.yml (app, postgres, grafana)
-- PostgreSQL schema (spans, failures, recovery_attempts)
-- CORS lockdown with configurable origins
-- Optional API key authentication middleware
-- In-memory trace store with max-traces eviction guard
-- CONTRIBUTING.md, CODE_OF_CONDUCT.md, issue/PR templates
-
-### Added
-- Textual TUI ops console (`agenticu tui`, `tui` extra): dashboard, traces,
-  failures, forecast, attribution, recovery trigger
-- npm distribution (`npm install -g agenticu` via Node bin shim)
-- OpenTofu AWS prod stack (`infra/tofu/`): ECS Fargate + RDS + ALB + Grafana
-- `category` field on trace API responses (wired from `FAILURE_CATEGORY_MAP`)
-- Pre-commit hooks (ruff check + format) and ruff lint/format gates in CI
-- `pre-commit` and `vulture` in the `dev` extra
+- Agent instrumentation SDK: `@trace`, `@tool_call`, `@handoff`, `@decision`
+  decorators emitting OpenTelemetry spans
+- MAST classifier: 14 failure modes across Specification / Coordination /
+  Verification, with pattern-matching (fast) and embedding-similarity (deep) paths
+- PROMAS-style forecaster: Markov transition model predicting failure probability
+  at each handoff, plus an `OutcomeTracker` feedback loop
+- Causal attribution: traces a failure back through the handoff chain to the
+  root-cause agent
+- Recovery playbook engine: 14 playbooks returning structured `RecoveryAction`,
+  with retry, cooldown, and Slack / PagerDuty escalation
+- Inline recovery via `@trace(classifier=..., store=..., attributor=...)`
+- FastAPI server: traces, failures, recovery, forecast, attribution, metrics
+- Textual TUI ops console (`agenticu tui`, `tui` extra)
+- CLI: `agenticu server | migrate | check | tui`
+- PostgreSQL schema (spans, failures, recovery_attempts) plus an in-memory store
+  with `max_traces` eviction
+- Prometheus metrics (`agenticu_failures_total`, `agenticu_recovery_total`,
+  `agenticu_recovery_success_total`, `agenticu_agent_spans_total`) and a bundled
+  Grafana dashboard, auto-provisioned through Docker Compose
+- npm distribution (Node bin shim), Docker + Compose stack, OpenTofu AWS stack
+  (ECS Fargate + RDS + ALB)
+- Optional API-key auth middleware; CORS locked down by default
+- `Release` workflow publishing wheel + sdist to PyPI via Trusted Publishing (OIDC)
 
 ### Changed
-- Playbooks return `RecoveryAction` (structured) instead of bare `bool`
+- `schema.sql` now ships inside the package (`agenticu/schema.sql`); `agenticu
+  migrate` uses the bundled schema by default, so migrations work after
+  `pip install`
+- Playbooks return `RecoveryAction` (structured) instead of a bare `bool`
+- Grafana dashboard and alerts reference `_total`-suffixed counter names
+
+### Fixed
+- `/metrics` serves Prometheus text exposition instead of a JSON-escaped string
+- TUI client maps every transport failure (connect error, timeout) to `TUIError`
+- Inline recovery honours `@trace(max_retries=...)` and persists attempts via
+  `TraceStore.insert_recovery` (previously it bypassed PostgreSQL and always
+  retried exactly once)
+- `@trace` records span ids as hex strings so causal attribution can match
+  stored spans
+- Config env-var overrides nest under `agenticu`; `TraceProcessor` dedup set is
+  per-instance; the OTel exporter converts nanosecond timestamps
 
 ### Removed
-- Dead code: never-incremented Prometheus counters in API routes, unused
-  `MetricsTracker` helpers, `TransitionModel`/`Forecaster` leftovers superseded
-  by `OutcomeTracker`, incomplete `get_failure_examples` helper, unused test
-  fixtures/helpers
-- Zero lint errors repo-wide (`ruff check` + `ruff format` baselined)
+- Dead code: never-incremented Prometheus counters, unused helpers and fixtures

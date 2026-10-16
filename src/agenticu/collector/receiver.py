@@ -8,6 +8,7 @@ from typing import Any
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
+from agenticu import metrics as prom
 from agenticu.collector.processor import TraceProcessor
 from agenticu.collector.storage import TraceStore
 from agenticu.models import FailureMode, SpanStatus
@@ -27,6 +28,7 @@ class AgentICUExporter(SpanExporter):
                 span = self._convert(otel_span)
                 span = self.processor.process(span)
                 self.store._insert_span_sync(span)
+                prom.record_span(span.agent_id, span.span_type)
 
                 if span.status == SpanStatus.FAILURE and span.failure_mode:
                     self.store._record_failure_sync(
@@ -36,6 +38,7 @@ class AgentICUExporter(SpanExporter):
                         failure_mode=span.failure_mode,
                         error=span.error_message or "unknown",
                     )
+                    prom.record_failure(span.failure_mode, span.agent_id)
             except Exception:
                 logger.exception("Failed to export span %s", otel_span.get_span_context().span_id)
         return SpanExportResult.SUCCESS

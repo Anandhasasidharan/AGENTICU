@@ -29,7 +29,7 @@ class AgentICUClient:
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         try:
             resp = await self._client.get(path, params=params)
-        except httpx.ConnectError as e:
+        except httpx.RequestError as e:
             raise TUIError(f"Cannot reach server at {self.base_url}: {e}") from e
         if resp.status_code == 404:
             raise TUIError(f"Endpoint unavailable (404): {path}")
@@ -40,7 +40,7 @@ class AgentICUClient:
     async def _post(self, path: str, payload: dict[str, Any]) -> Any:
         try:
             resp = await self._client.post(path, json=payload)
-        except httpx.ConnectError as e:
+        except httpx.RequestError as e:
             raise TUIError(f"Cannot reach server at {self.base_url}: {e}") from e
         if resp.status_code >= 400:
             detail = resp.text[:200]

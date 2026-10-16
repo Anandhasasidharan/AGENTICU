@@ -38,7 +38,11 @@ def main() -> None:
         default=os.environ.get("AGENTICU__STORAGE__DSN", "postgresql://localhost:5432/agenticu"),
         help="PostgreSQL DSN",
     )
-    migrate.add_argument("--schema", default="schema.sql", help="Path to schema.sql")
+    migrate.add_argument(
+        "--schema",
+        default=None,
+        help="Path to a schema.sql (default: the schema bundled with the package)",
+    )
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -102,21 +106,26 @@ def _run_server() -> None:
     uvicorn.run(app, host=api_cfg["host"], port=api_cfg["port"], log_level="info")
 
 
-async def _run_migrate(dsn: str, schema_path: str) -> None:
+async def _run_migrate(dsn: str, schema_path: str | None) -> None:
     try:
         import asyncpg
     except ImportError:
         logger.error("asyncpg is required. Install: pip install agenticu[postgres]")
         sys.exit(1)
 
-    path = Path(schema_path)
-    if not path.exists():
-        logger.error("Schema file not found: %s", schema_path)
-        sys.exit(1)
+    if schema_path:
+        path = Path(schema_path)
+        if not path.exists():
+            logger.error("Schema file not found: %s", schema_path)
+            sys.exit(1)
+        sql = path.read_text()
+    else:
+        from importlib.resources import files
+
+        sql = (files("agenticu") / "schema.sql").read_text()
 
     conn = await asyncpg.connect(dsn)
     try:
-        sql = path.read_text()
         await conn.execute(sql)
         logger.info("Schema applied successfully")
     finally:

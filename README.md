@@ -196,7 +196,8 @@ push, DB migrate, TUI against prod, teardown, cost notes) are in
 
 ```bash
 docker compose up
-# Starts: agenticu on :8000, PostgreSQL, Grafana on :3000
+# Starts: agenticu on :8000, PostgreSQL, Prometheus on :9090, Grafana on :3000
+# The Grafana datasource + AgentICU dashboard are auto-provisioned.
 ```
 
 ## API

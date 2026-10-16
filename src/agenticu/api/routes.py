@@ -3,9 +3,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from starlette.status import HTTP_403_FORBIDDEN
 
@@ -76,7 +76,7 @@ def create_app(
 
     @app.get("/metrics")
     async def metrics_endpoint():
-        return generate_latest()
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/api/v1/traces")
     async def list_traces(

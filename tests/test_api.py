@@ -27,6 +27,7 @@ def test_health():
 def test_metrics_endpoint():
     resp = client.get("/metrics")
     assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
 
 
 def test_list_traces_empty():

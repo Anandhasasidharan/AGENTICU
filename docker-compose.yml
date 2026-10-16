@@ -9,7 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./src/agenticu/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agenticu"]
       interval: 5s
@@ -27,6 +27,15 @@ services:
       postgres:
         condition: service_healthy
 
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - agenticu
+
   grafana:
     image: grafana/grafana:latest
     ports:
@@ -36,8 +45,11 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./src/agenticu/dashboard/grafana_dashboard.json:/etc/grafana/provisioning/dashboards/agenticu.json
       - ./src/agenticu/dashboard/grafana_dashboard.json:/etc/grafana/provisioning/dashboards/agenticu.json:ro
+      - ./infra/grafana/provisioning/dashboards/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      - ./infra/grafana/provisioning/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
+    depends_on:
+      - prometheus
 
 volumes:
   pgdata:

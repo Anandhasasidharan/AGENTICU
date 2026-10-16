@@ -10,11 +10,19 @@ from typing import Any, Callable, TypeVar
 from opentelemetry import trace as otel_trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
+from agenticu import metrics as prom
 from agenticu.attribution.causal_attributor import CausalAttributor
 from agenticu.classification.classifier import Classifier
 from agenticu.collector.storage import TraceStore
 from agenticu.context import ContextScope, get_context
-from agenticu.models import AgentContext, RecoveryAttempt, Span, SpanStatus
+from agenticu.models import (
+    AgentContext,
+    FailureMode,
+    RecoveryAction,
+    RecoveryAttempt,
+    Span,
+    SpanStatus,
+)
 from agenticu.recovery.playbook_registry import get_playbook
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -79,12 +87,13 @@ def trace(
                         if record_output:
                             otel_span.set_attribute("agenticu.output", str(result)[:2000])
                         otel_span.set_status(Status(StatusCode.OK))
-                        span_ctx.span_id = otel_span.get_span_context().span_id
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
                         return result
                     except BaseException as e:
                         otel_span.set_attribute("agenticu.error", str(e))
                         otel_span.set_attribute("agenticu.traceback", traceback.format_exc())
                         otel_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
                         if classifier and store:
                             recovered = _try_inline_recovery(
                                 func,
@@ -97,6 +106,7 @@ def trace(
                                 classifier,
                                 store,
                                 attributor,
+                                max_retries,
                             )
                             if recovered is not None:
                                 return recovered
@@ -128,12 +138,13 @@ def trace(
                         if record_output:
                             otel_span.set_attribute("agenticu.output", str(result)[:2000])
                         otel_span.set_status(Status(StatusCode.OK))
-                        span_ctx.span_id = otel_span.get_span_context().span_id
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
                         return result
                     except BaseException as e:
                         otel_span.set_attribute("agenticu.error", str(e))
                         otel_span.set_attribute("agenticu.traceback", traceback.format_exc())
                         otel_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
                         if classifier and store:
                             recovered = await _try_inline_recovery_async(
                                 func,
@@ -146,6 +157,7 @@ def trace(
                                 classifier,
                                 store,
                                 attributor,
+                                max_retries,
                             )
                             if recovered is not None:
                                 return recovered
@@ -156,6 +168,70 @@ def trace(
         return sync_wrapper  # type: ignore
 
     return decorator
+
+
+async def _run_playbook(
+    *,
+    playbook: Any,
+    span_ctx: AgentContext,
+    error: BaseException,
+    failure_mode: FailureMode,
+    store: TraceStore,
+    attributor: CausalAttributor | None,
+    attempt_number: int,
+) -> RecoveryAction:
+    """Attribute the failure, run the playbook, and persist the attempt."""
+    root_agent_id: str | None = None
+    if attributor and span_ctx.trace_id and span_ctx.span_id:
+        try:
+            attr_result = await attributor.attribute(span_ctx.trace_id, span_ctx.span_id)
+            root_agent_id = attr_result.root_agent_id
+        except Exception:
+            pass
+
+    action = await playbook(
+        span=Span(
+            trace_id=span_ctx.trace_id,
+            span_id=span_ctx.span_id or "",
+            agent_id=span_ctx.agent_id,
+            status=SpanStatus.ERROR,
+            error_message=str(error),
+            failure_mode=failure_mode,
+        ),
+        store=store,
+        root_agent_id=root_agent_id,
+    )
+    await store.insert_recovery(
+        RecoveryAttempt(
+            trace_id=span_ctx.trace_id,
+            span_id=span_ctx.span_id or "",
+            failure_mode=failure_mode,
+            attempt_number=attempt_number,
+            strategy=playbook.__name__,
+            root_agent_id=root_agent_id,
+            success=action.should_retry,
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        )
+    )
+    prom.record_recovery(failure_mode, playbook.__name__, action.should_retry)
+    return action
+
+
+def _prepare_inline_recovery(
+    error: BaseException,
+    classifier: Classifier,
+) -> tuple[Any, FailureMode] | None:
+    """Classify the failure and look up its playbook, or None if there is nothing to do."""
+    trace_text = f"Error: {error}\n{traceback.format_exc()}"
+    failure_span = Span(status=SpanStatus.ERROR, error_message=str(error))
+    result = classifier.classify(failure_span, trace_text=trace_text)
+    if result.failure_mode is None:
+        return None
+    playbook = get_playbook(result.failure_mode)
+    if playbook is None:
+        return None
+    return playbook, result.failure_mode
 
 
 def _try_inline_recovery(
@@ -169,59 +245,33 @@ def _try_inline_recovery(
     classifier: Classifier,
     store: TraceStore,
     attributor: CausalAttributor | None = None,
+    max_retries: int = 1,
 ) -> Any:
-    """Attempt inline recovery: classify → attribute → run playbook → retry."""
-    trace_text = f"Error: {error}\n{traceback.format_exc()}"
-    failure_span = Span(status=SpanStatus.ERROR, error_message=str(error))
-    result = classifier.classify(failure_span, trace_text=trace_text)
-    if result.failure_mode is None:
+    """Sync inline recovery: classify → attribute → run playbook → retry."""
+    prepared = _prepare_inline_recovery(error, classifier)
+    if prepared is None:
         return None
-    action = get_playbook(result.failure_mode)
-    if action is None:
-        return None
+    playbook, failure_mode = prepared
 
-    root_agent_id: str | None = None
-    if attributor and span_ctx.trace_id and span_ctx.span_id:
-        try:
-            attr_result = asyncio.run(
-                attributor.attribute(span_ctx.trace_id, span_ctx.span_id or "")
+    for attempt_number in range(1, max_retries + 1):
+        action: RecoveryAction = asyncio.run(
+            _run_playbook(
+                playbook=playbook,
+                span_ctx=span_ctx,
+                error=error,
+                failure_mode=failure_mode,
+                store=store,
+                attributor=attributor,
+                attempt_number=attempt_number,
             )
-            root_agent_id = attr_result.root_agent_id
-        except Exception:
-            pass
-
-    recovery_action = action(
-        span=Span(
-            trace_id=span_ctx.trace_id,
-            span_id=span_ctx.span_id or "",
-            agent_id=span_ctx.agent_id,
-            status=SpanStatus.ERROR,
-            error_message=str(error),
-            failure_mode=result.failure_mode,
-        ),
-        store=store,
-        root_agent_id=root_agent_id,
-    )
-    if hasattr(recovery_action, "__await__"):
-        recovery_action = asyncio.run(recovery_action)
-    attempt = RecoveryAttempt(
-        trace_id=span_ctx.trace_id,
-        span_id=span_ctx.span_id or "",
-        failure_mode=result.failure_mode,
-        attempt_number=1,
-        strategy=action.__name__,
-        root_agent_id=root_agent_id,
-        success=recovery_action.should_retry,
-        started_at=datetime.now(timezone.utc),
-        completed_at=datetime.now(timezone.utc),
-    )
-    store._recoveries.append(attempt)
-    if recovery_action.should_retry:
-        try:
-            retry_result = func(*args, **kwargs)
-            return retry_result
-        except BaseException:
+        )
+        if not action.should_retry:
             return None
+        try:
+            return func(*args, **kwargs)
+        except BaseException:
+            if attempt_number == max_retries:
+                return None
     return None
 
 
@@ -236,54 +286,31 @@ async def _try_inline_recovery_async(
     classifier: Classifier,
     store: TraceStore,
     attributor: CausalAttributor | None = None,
+    max_retries: int = 1,
 ) -> Any:
-    """Attempt inline recovery: classify → attribute → run playbook → retry."""
-    trace_text = f"Error: {error}\n{traceback.format_exc()}"
-    failure_span = Span(status=SpanStatus.ERROR, error_message=str(error))
-    result = classifier.classify(failure_span, trace_text=trace_text)
-    if result.failure_mode is None:
+    """Async inline recovery: classify → attribute → run playbook → retry."""
+    prepared = _prepare_inline_recovery(error, classifier)
+    if prepared is None:
         return None
-    playbook = get_playbook(result.failure_mode)
-    if playbook is None:
-        return None
+    playbook, failure_mode = prepared
 
-    root_agent_id: str | None = None
-    if attributor and span_ctx.trace_id and span_ctx.span_id:
-        try:
-            attr_result = await attributor.attribute(span_ctx.trace_id, span_ctx.span_id or "")
-            root_agent_id = attr_result.root_agent_id
-        except Exception:
-            pass
-
-    recovery_action = await playbook(
-        span=Span(
-            trace_id=span_ctx.trace_id,
-            span_id=span_ctx.span_id or "",
-            agent_id=span_ctx.agent_id,
-            status=SpanStatus.ERROR,
-            error_message=str(error),
-            failure_mode=result.failure_mode,
-        ),
-        store=store,
-        root_agent_id=root_agent_id,
-    )
-    attempt = RecoveryAttempt(
-        trace_id=span_ctx.trace_id,
-        span_id=span_ctx.span_id or "",
-        failure_mode=result.failure_mode,
-        attempt_number=1,
-        strategy=playbook.__name__,
-        root_agent_id=root_agent_id,
-        success=recovery_action.should_retry,
-        started_at=datetime.now(timezone.utc),
-        completed_at=datetime.now(timezone.utc),
-    )
-    await store.insert_recovery(attempt)
-    if recovery_action.should_retry:
+    for attempt_number in range(1, max_retries + 1):
+        action: RecoveryAction = await _run_playbook(
+            playbook=playbook,
+            span_ctx=span_ctx,
+            error=error,
+            failure_mode=failure_mode,
+            store=store,
+            attributor=attributor,
+            attempt_number=attempt_number,
+        )
+        if not action.should_retry:
+            return None
         try:
             return await func(*args, **kwargs)
         except BaseException:
-            return None
+            if attempt_number == max_retries:
+                return None
     return None
 
 

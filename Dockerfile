@@ -14,7 +14,6 @@ COPY --from=builder /build/dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 
 COPY config.yaml /app/config.yaml
-COPY schema.sql /app/schema.sql
 
 EXPOSE 8000
 USER agenticu

@@ -1,5 +1,5 @@
 include LICENSE
 include README.md
 include config.yaml
-include schema.sql
+recursive-include src/agenticu *.sql
 recursive-include src/agenticu/dashboard *.json

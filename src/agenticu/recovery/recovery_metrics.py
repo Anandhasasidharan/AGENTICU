@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 
+from agenticu import metrics as prom
 from agenticu.models import FailureMode, RecoveryAttempt
 
 
@@ -29,6 +30,7 @@ class MetricsTracker:
                     slot["succeeded"] += 1
                 else:
                     slot["failed"] += 1
+        prom.record_recovery_attempt(attempt)
 
     def success_rate(self, mode: FailureMode | None = None) -> float:
         with self._lock:

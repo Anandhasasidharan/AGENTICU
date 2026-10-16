@@ -21,7 +21,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum(agenticu_recovery_success) / sum(agenticu_recovery_total)"
+          "expr": "sum(agenticu_recovery_success_total) / sum(agenticu_recovery_total)"
         }
       ],
       "gridPos": {"h": 4, "w": 4, "x": 0, "y": 8}
@@ -44,7 +44,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "sum by(agent_id) (agenticu_agent_spans)",
+          "expr": "sum by(agent_id) (agenticu_agent_spans_total)",
           "legendFormat": "{{agent_id}}"
         }
       ],

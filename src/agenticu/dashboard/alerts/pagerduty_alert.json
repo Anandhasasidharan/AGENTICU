@@ -1,6 +1,6 @@
 {
   "alert": "AgentICU Escalation Required",
-  "expr": "agenticu_recovery_total{mode!=\"\"} - agenticu_recovery_success{mode!=\"\"} > 2",
+  "expr": "agenticu_recovery_total{mode!=\"\"} - agenticu_recovery_success_total{mode!=\"\"} > 2",
   "for": "1m",
   "labels": {"severity": "critical", "pagerduty": "true"},
   "annotations": {

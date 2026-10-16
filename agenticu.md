@@ -5,7 +5,7 @@
 > **Difficulty:** Hard (largest project)  
 > **Signal to recruiters:** 🔥🔥🔥🔥🔥🔥 — Your signature piece. Proves you can do observability, distributed systems, and agent infrastructure. Directly referenced by Databricks as "the thing everyone needs but nobody's building."  
 > **GPU required?** No  
-> **Tests:** 97+ passing, 0 lint errors  
+> **Tests:** 113 passing, 0 lint errors  
 > **Package:** pip install agenticu (PyPI-ready, twine check passed)  
 
 ---
@@ -198,7 +198,7 @@ AgentICU
 │       ├── ISSUE_TEMPLATE/feature_request.md
 │       └── pull_request_template.md
 │
-└── Tests (107 passing)
+└── Tests (113 passing)
     ├── test_classifier.py    # MAST classification: patterns, signature DB
     ├── test_recovery.py      # Playbook registration, runner, metrics
     ├── test_playbooks.py     # All 14 playbooks return correct RecoveryActions
@@ -481,7 +481,7 @@ attributes the root cause to `agent_b` (not `agent_c` which surfaced it).
   `infra/tofu/README.md` (state bucket → push → apply → migrate → TUI at ALB URL)
 
 **New tests:** `test_tui_client.py` (10, respx-mocked) + headless Textual Pilot
-smoke test. **Total: 107 passing.**
+smoke test. **Total: 113 passing.**
 
 ### What's Next (After Launch)
 - Publish to PyPI: `python -m build && twine check --strict dist/* && twine upload dist/*` (unblocks `npm install -g agenticu` end-to-end)
@@ -496,7 +496,7 @@ smoke test. **Total: 107 passing.**
 
 ## Interview Narrative
 
-> "The MAST taxonomy paper analyzed 1,600+ multi-agent execution traces and found agents fail 41-86.7% of the time in production — and 79% of failures come from just 2 causes. But nobody operationalized this knowledge. I built AgentICU: a drop-in observability SDK that instruments agents, classifies failures in real-time using the MAST taxonomy, runs 14 automated recovery playbooks, and escalates to humans when recovery fails. The entire system ships as a pip-installable package with CLI, Docker orchestration, a FastAPI API server, Prometheus metrics, Grafana dashboards, a Textual terminal ops console, npm + PyPI distribution, OpenTofu AWS infrastructure, and 107 passing tests. On top of that, AgentICU predicts failures *before* they complete using a learned Markov transition model (PROMAS-style), and when one does happen it traces the failure back through the handoff chain to the agent that actually caused it — so recovery targets the right agent. No observability platform does either of these, let alone both."
+> "The MAST taxonomy paper analyzed 1,600+ multi-agent execution traces and found agents fail 41-86.7% of the time in production — and 79% of failures come from just 2 causes. But nobody operationalized this knowledge. I built AgentICU: a drop-in observability SDK that instruments agents, classifies failures in real-time using the MAST taxonomy, runs 14 automated recovery playbooks, and escalates to humans when recovery fails. The entire system ships as a pip-installable package with CLI, Docker orchestration, a FastAPI API server, Prometheus metrics, Grafana dashboards, a Textual terminal ops console, npm + PyPI distribution, OpenTofu AWS infrastructure, and 113 passing tests. On top of that, AgentICU predicts failures *before* they complete using a learned Markov transition model (PROMAS-style), and when one does happen it traces the failure back through the handoff chain to the agent that actually caused it — so recovery targets the right agent. No observability platform does either of these, let alone both."
 
 ---
 

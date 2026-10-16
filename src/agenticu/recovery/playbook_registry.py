@@ -36,7 +36,7 @@ def registered_modes() -> set[FailureMode]:
 
 
 # ------------------------------------------------------------------ #
-# Playbook implementations (6 of 14)
+# Playbook implementations (14 of 14 failure modes)
 # ------------------------------------------------------------------ #
 
 
