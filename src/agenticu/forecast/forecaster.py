@@ -31,6 +31,9 @@ class Forecaster:
         self._model = model
         self.threshold = threshold
 
+    async def refresh(self, store: TraceStore) -> None:
+        await self._model.learn(store)
+
     async def forecast_at_handoff(
         self,
         source_agent: str,

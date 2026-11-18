@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -12,6 +12,7 @@ from starlette.status import HTTP_403_FORBIDDEN
 from agenticu import __version__
 from agenticu.api.ingest import register_ingestion
 from agenticu.attribution.causal_attributor import CausalAttributor
+from agenticu.collector.pipeline import IngestionPipeline
 from agenticu.collector.storage import TraceStore
 from agenticu.forecast.forecaster import Forecaster
 from agenticu.forecast.outcome_tracker import OutcomeTracker
@@ -48,15 +49,18 @@ def create_app(
     attributor: CausalAttributor | None = None,
     forecaster: Forecaster | None = None,
     outcome_tracker: OutcomeTracker | None = None,
+    pipeline: IngestionPipeline | None = None,
 ) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if outcome_tracker:
-            await outcome_tracker.start()
-        yield
-        if outcome_tracker:
-            await outcome_tracker.stop()
+        async with AsyncExitStack() as stack:
+            if outcome_tracker:
+                await outcome_tracker.start()
+                stack.push_async_callback(outcome_tracker.stop)
+            if pipeline:
+                await stack.enter_async_context(pipeline.running())
+            yield
 
     app = FastAPI(title="AgentICU", version=__version__, lifespan=lifespan)
 
@@ -72,7 +76,7 @@ def create_app(
     if api_key:
         app.middleware("http")(_api_key_middleware(api_key))
 
-    register_ingestion(app, store.insert_spans)
+    register_ingestion(app, pipeline.submit if pipeline else store.insert_spans)
 
     @app.get("/health")
     async def health():
@@ -164,6 +168,7 @@ def create_app(
             source_agent: str = Query(...),
             target_agent: str = Query(...),
         ):
+            await forecaster.refresh(store)
             result = await forecaster.forecast_at_handoff(source_agent, target_agent)
             return {
                 "failure_probability": result.failure_probability,
@@ -179,6 +184,7 @@ def create_app(
         async def get_forecast_trace(
             trace_id: str = Query(...),
         ):
+            await forecaster.refresh(store)
             results = await forecaster.forecast_trace(trace_id, store)
             return {
                 "forecasts": [

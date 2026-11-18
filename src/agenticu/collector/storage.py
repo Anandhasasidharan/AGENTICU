@@ -5,7 +5,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from agenticu.models import FailureMode, RecoveryAttempt, Span, SpanEvent, SpanStatus
+from agenticu.models import (
+    FAILURE_CATEGORY_MAP,
+    FailureMode,
+    RecoveryAttempt,
+    Span,
+    SpanEvent,
+    SpanStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,20 +170,34 @@ class TraceStore:
         agent_id: str,
         failure_mode: FailureMode,
         error: str,
-    ) -> None:
+        *,
+        severity: str = "error",
+        timestamp: datetime | None = None,
+    ) -> bool:
+        category = FAILURE_CATEGORY_MAP[failure_mode].value
+        timestamp = timestamp or datetime.now(timezone.utc)
+        classification_key = json.dumps([trace_id, span_id])
         if self._pool:
-            await self._pool.execute(
+            row = await self._pool.fetchrow(
                 """
-                INSERT INTO failures (trace_id, span_id, agent_id, failure_mode, error_message)
-                VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO failures (trace_id, span_id, agent_id, failure_mode, error_message,
+                                      classification_key, category, severity, timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (classification_key) DO NOTHING RETURNING id
                 """,
                 trace_id,
                 span_id,
                 agent_id,
                 failure_mode.value,
                 error,
+                classification_key,
+                category,
+                severity,
+                timestamp,
             )
-            return
+            return row is not None
+        if any(f["trace_id"] == trace_id and f["span_id"] == span_id for f in self._failures):
+            return False
         self._failures.append(
             {
                 "trace_id": trace_id,
@@ -184,9 +205,12 @@ class TraceStore:
                 "agent_id": agent_id,
                 "failure_mode": failure_mode.value,
                 "error": error,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "category": category,
+                "severity": severity,
+                "timestamp": timestamp.isoformat(),
             }
         )
+        return True
 
     async def get_failures(
         self,
@@ -207,13 +231,13 @@ class TraceStore:
                 agent_id,
                 limit,
             )
-            return [dict(r) for r in rows]
+            return [_failure_response(dict(row)) for row in rows]
         results = self._failures
         if failure_mode:
             results = [f for f in results if f["failure_mode"] == failure_mode]
         if agent_id:
             results = [f for f in results if f["agent_id"] == agent_id]
-        return results[:limit]
+        return [_failure_response(dict(row)) for row in results[:limit]]
 
     # ------------------------------------------------------------------ #
     # Recovery operations
@@ -298,3 +322,15 @@ def _span_parameters(span: Span) -> tuple:
             ]
         ),
     )
+
+
+def _failure_response(row: dict[str, Any]) -> dict[str, Any]:
+    row.pop("classification_key", None)
+    row["error"] = row.get("error", row.get("error_message"))
+    if not row.get("category"):
+        try:
+            row["category"] = FAILURE_CATEGORY_MAP[FailureMode(row["failure_mode"])].value
+        except (KeyError, ValueError):
+            row["category"] = None
+    row["severity"] = row.get("severity") or "error"
+    return row

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import zlib
@@ -62,9 +63,17 @@ def _reject_constant(value: str) -> Any:
 
 
 def register_ingestion(app: FastAPI, ingest: Callable[[list[Span]], Awaitable[None]]) -> None:
+    async def submit(spans: list[Span]) -> None:
+        try:
+            await ingest(spans)
+        except asyncio.QueueFull as exc:
+            raise HTTPException(
+                503, "Trace ingestion queue is full", headers={"Retry-After": "1"}
+            ) from exc
+
     @app.post("/ingest")
     async def debug_ingest(payload: DebugBatch):
-        await ingest([item.to_span() for item in payload.spans])
+        await submit([item.to_span() for item in payload.spans])
         return {"accepted": len(payload.spans)}
 
     @app.post("/v1/traces")
@@ -96,7 +105,7 @@ def register_ingestion(app: FastAPI, ingest: Callable[[list[Span]], Awaitable[No
             raise HTTPException(400, f"Invalid OTLP trace payload: {exc}") from exc
 
         if spans:
-            await ingest(spans)
+            await submit(spans)
         if media_type == "application/x-protobuf":
             # An empty ExportTraceServiceResponse serializes to zero bytes.
             return Response(content=b"", media_type=media_type)

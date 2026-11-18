@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from importlib.resources import files
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -14,9 +15,15 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from agenticu.api.routes import create_app
+from agenticu.attribution.causal_attributor import CausalAttributor
+from agenticu.classification.classifier import Classifier
 from agenticu.collector.database import migrate_store, open_store
+from agenticu.collector.pipeline import IngestionPipeline
 from agenticu.collector.storage import TraceStore
+from agenticu.forecast.forecaster import Forecaster
+from agenticu.forecast.transition_model import TransitionModel
 from agenticu.models import Span
+from agenticu.recovery.escalation import EscalationService
 from agenticu.recovery.playbook_runner import PlaybookRunner
 from agenticu.recovery.recovery_metrics import MetricsTracker
 
@@ -120,7 +127,11 @@ async def test_postgres_dsn_takes_precedence(tmp_path, monkeypatch):
     dsn = "postgresql://user@localhost/agenticu"
     pool = AsyncMock()
     pool.fetch.side_effect = [
-        [{"version": "001_initial.sql"}, {"version": "002_span_events.sql"}],
+        [
+            {"version": migration.name}
+            for migration in files("agenticu").joinpath("migrations", "postgres").iterdir()
+            if migration.name.endswith(".sql")
+        ],
         [],
     ]
     context = MagicMock()
@@ -208,3 +219,72 @@ assert get_tracer_provider().force_flush()
         finally:
             server.should_exit = True
             worker.join(5)
+
+
+async def test_ingest_worker_classifies_and_forecasts_from_sqlite(tmp_path):
+    storage = {"sqlite_path": str(tmp_path / "pipeline.db")}
+    await migrate_store(storage)
+    async with open_store(storage) as store:
+        attributor = CausalAttributor(store)
+        escalation = EscalationService()
+        notified = AsyncMock()
+        escalation.add_hook(notified)
+        pipeline = IngestionPipeline(
+            store, Classifier(fast_path_only=True), attributor, escalation, auto_recover=False
+        )
+        metrics = MetricsTracker()
+        app = create_app(
+            store,
+            PlaybookRunner(store, metrics),
+            metrics,
+            attributor=attributor,
+            pipeline=pipeline,
+            forecaster=Forecaster(TransitionModel()),
+        )
+        payload = {
+            "spans": [
+                {
+                    "span_id": "handoff",
+                    "trace_id": "pipeline",
+                    "span_type": "handoff",
+                    "agent_id": "researcher",
+                    "attributes": {"agenticu.target_agent": "writer"},
+                    "start_time": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "span_id": "failed",
+                    "trace_id": "pipeline",
+                    "parent_span_id": "handoff",
+                    "agent_id": "writer",
+                    "start_time": "2026-01-01T00:00:01Z",
+                    "end_time": "2026-01-01T00:00:02Z",
+                    "status": "error",
+                    "error_message": "Agent kept repeating the same step",
+                },
+            ]
+        }
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as client:
+            async with pipeline.running():
+                for _ in range(2):
+                    response = await client.post("/ingest", json=payload)
+                    assert response.json() == {"accepted": 2}
+            failures = (await client.get("/api/v1/failures")).json()["failures"]
+            assert len(failures) == 1
+            classification = failures[0]
+            assert classification["failure_mode"] == "1.3"
+            assert classification["category"] == "specification"
+            assert classification["severity"] == "error"
+            assert classification["agent_id"] == "writer"
+            assert classification["timestamp"] == "2026-01-01T00:00:02+00:00"
+            forecast = await client.get(
+                "/api/v1/forecast", params={"source_agent": "researcher", "target_agent": "writer"}
+            )
+            assert forecast.json()["failure_probability"] == 1
+            attribution = await client.get(
+                "/api/v1/attribution", params={"trace_id": "pipeline", "span_id": "failed"}
+            )
+            assert attribution.json()["root_agent_id"] == "researcher"
+        notified.assert_awaited_once()
+        assert notified.call_args.args[0]["failure_mode"] == "1.3"

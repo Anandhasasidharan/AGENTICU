@@ -68,9 +68,11 @@ async def _run_server() -> None:
     from agenticu.attribution.causal_attributor import CausalAttributor
     from agenticu.classification.classifier import Classifier
     from agenticu.collector.database import open_store
+    from agenticu.collector.pipeline import IngestionPipeline
     from agenticu.forecast.forecaster import Forecaster
     from agenticu.forecast.outcome_tracker import OutcomeTracker
     from agenticu.forecast.transition_model import TransitionModel
+    from agenticu.recovery.escalation import EscalationService
     from agenticu.recovery.playbook_runner import PlaybookRunner
     from agenticu.recovery.recovery_metrics import MetricsTracker
 
@@ -79,9 +81,20 @@ async def _run_server() -> None:
 
     async with open_store(cfg["agenticu"]["storage"]) as store:
         metrics = MetricsTracker()
-        runner = PlaybookRunner(store=store, metrics=metrics)
+        recovery = cfg["agenticu"]["recovery"]
+        escalation = EscalationService(**cfg["agenticu"]["escalation"])
+        runner = PlaybookRunner(
+            store=store,
+            metrics=metrics,
+            max_retries=recovery["max_retries"],
+            escalate_after=recovery["escalate_after"],
+            cooldown_seconds=recovery["cooldown_seconds"],
+            escalation_hook=escalation,
+        )
         transition_model = TransitionModel()
-        classifier = Classifier(fast_path_only=True)
+        classifier = (
+            Classifier(fast_path_only=True) if cfg["agenticu"]["classifier"]["enabled"] else None
+        )
         forecaster = Forecaster(model=transition_model)
         attributor = CausalAttributor(store=store)
         tracker = OutcomeTracker(
@@ -90,6 +103,9 @@ async def _run_server() -> None:
             classifier=classifier,
             interval_secs=60,
             min_new_traces=5,
+        )
+        pipeline = IngestionPipeline(
+            store, classifier, attributor, escalation, auto_recover=recovery["auto_recover"]
         )
         app = create_app(
             store=store,
@@ -100,6 +116,7 @@ async def _run_server() -> None:
             attributor=attributor,
             forecaster=forecaster,
             outcome_tracker=tracker,
+            pipeline=pipeline,
         )
 
         logger.info("Starting AgentICU server on %s:%s", api_cfg["host"], api_cfg["port"])

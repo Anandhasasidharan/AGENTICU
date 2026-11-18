@@ -80,6 +80,13 @@ requires a bearer token. For a custom tracer provider, register
 `agenticu.AgentICUHTTPExporter` with that provider. OpenTelemetry-compatible
 clients can also POST traces directly to `/v1/traces`.
 
+The server validates a batch before queuing it for classification and storage.
+The bounded in-process queue returns HTTP 503 when full and drains during a
+graceful shutdown. Accepted traces may take a moment to become queryable, and
+a crash can lose batches still in the queue. The server classifies error spans
+with the MAST rules and records their category and severity. Forecast and
+attribution endpoints use persisted traces.
+
 ## Features
 
 | Feature | Description |

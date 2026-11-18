@@ -29,8 +29,7 @@ class TransitionModel:
 
         Returns the number of traces processed.
         """
-        self._handoff_counts.clear()
-        self._failure_counts.clear()
+        learned = TransitionModel()
 
         seen_trace_ids: set[str] = set()
         spans = await store.query_traces(limit=5000)
@@ -40,17 +39,20 @@ class TransitionModel:
         processed = 0
         for trace_id in seen_trace_ids:
             trace_spans = await store.get_trace_by_id(trace_id)
-            self._learn_from_trace(trace_spans)
+            learned._learn_from_trace(trace_spans)
             processed += 1
 
+        self._handoff_counts = learned._handoff_counts
+        self._failure_counts = learned._failure_counts
         return processed
 
     def _learn_from_trace(self, spans: list[Span]) -> None:
         sorted_spans = sorted(spans, key=lambda s: s.start_time)
 
-        last_handoff: tuple[str, str, int] | None = None
+        last_handoff: tuple[str, str] | None = None
         for s in sorted_spans:
             if s.span_type == "handoff":
+                last_handoff = None
                 src = s.agent_id or ""
                 tgt = s.attributes.get("agenticu.target_agent", "") if s.attributes else ""
                 if src and tgt:
@@ -59,9 +61,8 @@ class TransitionModel:
                     self._handoff_counts[key] += 1
 
             if s.failure_mode is not None and last_handoff is not None:
-                src, tgt = last_handoff[0], last_handoff[1]
-                key = (src, tgt)
-                self._failure_counts[key][s.failure_mode] += 1
+                self._failure_counts[last_handoff][s.failure_mode] += 1
+                last_handoff = None
 
     def predict(
         self, source_agent: str, target_agent: str
