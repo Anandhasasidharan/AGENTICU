@@ -122,7 +122,7 @@ Set an escalation webhook to receive traces after repeated failures.
 | Feature | Description |
 |---------|-------------|
 | **Decorators** | `@trace`, `@tool_call`, `@handoff`, `@decision` — framework-agnostic OTel instrumentation |
-| **MAST Classifier** | 14 failure modes across Specification (5), Coordination (6), Verification (3) |
+| **MAST Classifier** | Experimental rule-based detection across 14 failure modes |
 | **PROMAS Forecaster** | Markov transition model learns from your traces and predicts failure probability *before* each handoff |
 | **Causal Attribution** | Traces a failure back through the handoff/decision chain to the **root-cause agent**, not just the one holding the bag |
 | **Auto-Recovery** | 14 playbooks — structured `RecoveryAction` with retry logic, routed to the root-cause agent |
@@ -201,6 +201,11 @@ print(result.confidence)            # 0.0–1.0
 ```
 
 ## MAST Failure Taxonomy
+
+**All 14 classifier modes are experimental.** Each scored below 0.50 F1 on
+the public trace-level benchmark. The rules can recognize explicit failure
+messages such as the one in the recovery example. See the per-mode scores,
+confusion summary, and evaluation method. [Classifier validation](docs/classifier-validation.md)
 
 | Category | Modes | % of Failures |
 |----------|-------|---------------|
