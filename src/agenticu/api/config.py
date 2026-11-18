@@ -12,7 +12,9 @@ DEFAULT_CONFIG_PATH = Path("config.yaml")
 DEFAULT_CONFIG: dict[str, Any] = {
     "agenticu": {
         "storage": {
-            "dsn": "postgresql://localhost:5432/agenticu",
+            "dsn": "",
+            "password": "",
+            "sqlite_path": "agenticu.db",
             "pool_size": 10,
             "max_overflow": 20,
         },

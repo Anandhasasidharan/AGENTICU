@@ -13,6 +13,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from agenticu import metrics as prom
 from agenticu.attribution.causal_attributor import CausalAttributor
 from agenticu.classification.classifier import Classifier
+from agenticu.collector.http_exporter import configure_http_export_from_env
 from agenticu.collector.storage import TraceStore
 from agenticu.context import ContextScope, get_context
 from agenticu.models import (
@@ -63,6 +64,7 @@ def trace(
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            configure_http_export_from_env()
             ctx = get_context() or AgentContext(agent_id=agent_id)
             name = span_name or func.__name__
 
@@ -87,13 +89,13 @@ def trace(
                         if record_output:
                             otel_span.set_attribute("agenticu.output", str(result)[:2000])
                         otel_span.set_status(Status(StatusCode.OK))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                         return result
                     except BaseException as e:
                         otel_span.set_attribute("agenticu.error", str(e))
                         otel_span.set_attribute("agenticu.traceback", traceback.format_exc())
                         otel_span.set_status(Status(StatusCode.ERROR, str(e)))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                         if classifier and store:
                             recovered = _try_inline_recovery(
                                 func,
@@ -114,6 +116,7 @@ def trace(
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            configure_http_export_from_env()
             ctx = get_context() or AgentContext(agent_id=agent_id)
             name = span_name or func.__name__
 
@@ -138,13 +141,13 @@ def trace(
                         if record_output:
                             otel_span.set_attribute("agenticu.output", str(result)[:2000])
                         otel_span.set_status(Status(StatusCode.OK))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                         return result
                     except BaseException as e:
                         otel_span.set_attribute("agenticu.error", str(e))
                         otel_span.set_attribute("agenticu.traceback", traceback.format_exc())
                         otel_span.set_status(Status(StatusCode.ERROR, str(e)))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "x")
+                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                         if classifier and store:
                             recovered = await _try_inline_recovery_async(
                                 func,

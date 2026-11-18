@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from agenticu.models import FailureMode, RecoveryAttempt, Span, SpanStatus
+from agenticu.models import FailureMode, RecoveryAttempt, Span, SpanEvent, SpanStatus
 
 logger = logging.getLogger(__name__)
 
@@ -61,32 +61,19 @@ class TraceStore:
 
     async def insert_span(self, span: Span) -> None:
         if self._pool:
-            await self._pool.execute(
-                """
-                INSERT INTO spans (id, trace_id, parent_span_id, span_type, agent_id,
-                                   input, output, attributes, start_time,
-                                   end_time, status, failure_mode, error_message)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-                ON CONFLICT (id) DO NOTHING
-                """,
-                span.span_id,
-                span.trace_id,
-                span.parent_span_id,
-                span.span_type,
-                span.agent_id,
-                json.dumps(span.input) if span.input else None,
-                json.dumps(span.output) if span.output else None,
-                json.dumps(span.attributes),
-                span.start_time,
-                span.end_time,
-                span.status.value,
-                span.failure_mode.value if span.failure_mode else None,
-                span.error_message,
-            )
+            await self._pool.execute(_INSERT_SPAN, *_span_parameters(span))
+        else:
+            self._insert_span_sync(span)
+
+    async def insert_spans(self, spans: list[Span]) -> None:
+        if self._pool:
+            await self._pool.executemany(_INSERT_SPAN, [_span_parameters(span) for span in spans])
             return
-        self._memory.setdefault(span.trace_id, []).append(span)
-        if len(self._memory) > self._max_traces:
-            self._evict_oldest_trace()
+        for span in spans:
+            if not any(
+                saved.span_id == span.span_id for saved in self._memory.get(span.trace_id, [])
+            ):
+                self._insert_span_sync(span)
 
     async def query_traces(
         self,
@@ -99,8 +86,8 @@ class TraceStore:
             rows = await self._pool.fetch(
                 """
                 SELECT * FROM spans
-                WHERE ($1::text IS NULL OR agent_id = $1)
-                  AND ($2::text IS NULL OR status = $2)
+                WHERE (CAST($1 AS TEXT) IS NULL OR agent_id = $1)
+                  AND (CAST($2 AS TEXT) IS NULL OR status = $2)
                 ORDER BY start_time DESC
                 LIMIT $3 OFFSET $4
                 """,
@@ -118,7 +105,7 @@ class TraceStore:
         if status:
             spans = [s for s in spans if s.status.value == status]
         spans.sort(key=lambda s: s.start_time, reverse=True)
-        return spans[:limit]
+        return spans[offset : offset + limit]
 
     async def get_trace_by_id(self, trace_id: str) -> list[Span]:
         if self._pool:
@@ -140,8 +127,14 @@ class TraceStore:
             input=json.loads(row["input"]) if row.get("input") else None,
             output=json.loads(row["output"]) if row.get("output") else None,
             attributes=json.loads(row["attributes"]) if row.get("attributes") else {},
-            start_time=row["start_time"],
-            end_time=row.get("end_time"),
+            start_time=_read_timestamp(row["start_time"]),
+            end_time=_read_timestamp(row.get("end_time")),
+            events=[
+                SpanEvent(
+                    event["name"], datetime.fromisoformat(event["timestamp"]), event["attributes"]
+                )
+                for event in json.loads(row.get("events") or "[]")
+            ],
             status=SpanStatus(row["status"]),
             failure_mode=FailureMode(row["failure_mode"]) if row.get("failure_mode") else None,
             error_message=row.get("error_message"),
@@ -205,8 +198,8 @@ class TraceStore:
             rows = await self._pool.fetch(
                 """
                 SELECT * FROM failures
-                WHERE ($1::text IS NULL OR failure_mode = $1)
-                  AND ($2::text IS NULL OR agent_id = $2)
+                WHERE (CAST($1 AS TEXT) IS NULL OR failure_mode = $1)
+                  AND (CAST($2 AS TEXT) IS NULL OR agent_id = $2)
                 ORDER BY timestamp DESC
                 LIMIT $3
                 """,
@@ -264,3 +257,44 @@ class TraceStore:
         total = len(self._recoveries)
         succeeded = sum(1 for r in self._recoveries if r.success)
         return {"total": total, "succeeded": succeeded, "failed": total - succeeded}
+
+
+def _read_timestamp(value: datetime | str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if isinstance(value, str) else value
+
+
+_INSERT_SPAN = """
+INSERT INTO spans (id, trace_id, parent_span_id, span_type, agent_id,
+                   input, output, attributes, start_time, end_time, status,
+                   failure_mode, error_message, events)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+ON CONFLICT (id) DO NOTHING
+"""
+
+
+def _span_parameters(span: Span) -> tuple:
+    return (
+        span.span_id,
+        span.trace_id,
+        span.parent_span_id,
+        span.span_type,
+        span.agent_id,
+        json.dumps(span.input) if span.input is not None else None,
+        json.dumps(span.output) if span.output is not None else None,
+        json.dumps(span.attributes),
+        span.start_time,
+        span.end_time,
+        span.status.value,
+        span.failure_mode.value if span.failure_mode else None,
+        span.error_message,
+        json.dumps(
+            [
+                {
+                    "name": event.name,
+                    "timestamp": event.timestamp.isoformat(),
+                    "attributes": event.attributes,
+                }
+                for event in span.events
+            ]
+        ),
+    )

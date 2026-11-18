@@ -9,11 +9,19 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./src/agenticu/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agenticu"]
       interval: 5s
       retries: 5
+
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment:
+      AGENTICU__STORAGE__DSN: "postgresql://agenticu:agenticu@postgres:5432/agenticu"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   agenticu:
     build: .
@@ -24,8 +32,8 @@ services:
       AGENTICU__API__HOST: "0.0.0.0"
       AGENTICU__API__PORT: "8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   prometheus:
     image: prom/prometheus:latest

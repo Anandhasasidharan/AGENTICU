@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from starlette.status import HTTP_403_FORBIDDEN
 
 from agenticu import __version__
+from agenticu.api.ingest import register_ingestion
 from agenticu.attribution.causal_attributor import CausalAttributor
 from agenticu.collector.storage import TraceStore
 from agenticu.forecast.forecaster import Forecaster
@@ -70,6 +71,8 @@ def create_app(
 
     if api_key:
         app.middleware("http")(_api_key_middleware(api_key))
+
+    register_ingestion(app, store.insert_spans)
 
     @app.get("/health")
     async def health():

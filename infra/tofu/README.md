@@ -47,22 +47,19 @@ tofu apply tfplan
 
 ## 4. Migrate the database
 
-RDS has no initdb hook, so apply `schema.sql` once via the CLI from your machine
-(security group allows only ECS traffic by default — run from a host with access
-or temporarily allow your IP on port 5432):
+Run the versioned migrations from a host with access to the RDS instance.
+The security group allows ECS traffic by default.
 
 ```bash
-AGENTICU__STORAGE__DSN="postgresql://agenticu:<password>@<rds-endpoint>:5432/agenticu" \
-  agenticu migrate --dsn "postgresql://agenticu:<password>@<rds-endpoint>:5432/agenticu"
+export AGENTICU__STORAGE__DSN="postgresql://agenticu@<rds-endpoint>:5432/agenticu"
+export AGENTICU__STORAGE__PASSWORD="<password>"
+agenticu migrate
 ```
 
-Get `<password>` from Secrets Manager (`agenticu/db-password`) and
-`<rds-endpoint>` from `tofu output rds_endpoint`.
-
-Note: the ECS task receives the DB password via the `AGENTICU__DB_PASSWORD`
-secret. If your `TraceStore` DSN handling needs the password inline, update the
-task definition env to build the DSN from the secret (or extend the app to read
-it).
+Get the password from Secrets Manager (`agenticu/db-password`) and the
+endpoint with `tofu output rds_endpoint`. The ECS task receives the same
+password through its secret environment variable. After migrations finish,
+ECS can start the API against the initialized database.
 
 ## 5. Point the TUI at prod
 

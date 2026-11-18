@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/agenticu)](https://pypi.org/project/agenticu/)
 [![Python](https://img.shields.io/pypi/pyversions/agenticu)](https://pypi.org/project/agenticu/)
 
-Instrument multi-agent LLM systems with zero code changes. AgentICU captures structured traces via OpenTelemetry, classifies failures in real-time using the **MAST taxonomy** (14 failure modes across 3 categories), runs automated recovery playbooks, and escalates when recovery fails.
+Instrument multi-agent LLM systems with Python decorators. AgentICU captures structured traces via OpenTelemetry, classifies failures in real-time using the **MAST taxonomy** (14 failure modes across 3 categories), runs automated recovery playbooks, and escalates when recovery fails.
 
 Based on the MAST paper (NeurIPS 2025 Spotlight) — analysis of 1,642 agent traces across 7 frameworks found a 41–86.7% failure rate, with **79% of failures** caused by specification ambiguity (44.2%) and coordination breakdowns (32.3%).
 
@@ -57,6 +57,28 @@ async def robust_agent(query: str) -> str:
     # runs the matching recovery playbook, and retries
     return await query_database(query)
 ```
+
+### Send traces to a running server
+
+Start a local server with SQLite. Run migrations once before starting the server
+and again after upgrading AgentICU.
+
+```bash
+agenticu migrate
+agenticu server
+```
+
+Run your decorated agent in a separate terminal with one environment setting.
+
+```bash
+AGENTICU_SERVER_URL=http://localhost:8000 python your_agent.py
+```
+
+The SDK installs a batched OpenTelemetry exporter when the first decorated
+agent runs. Set `AGENTICU__API__KEY` in the agent environment if the server
+requires a bearer token. For a custom tracer provider, register
+`agenticu.AgentICUHTTPExporter` with that provider. OpenTelemetry-compatible
+clients can also POST traces directly to `/v1/traces`.
 
 ## Features
 
@@ -152,11 +174,14 @@ print(result.confidence)            # 0.0–1.0
 ## CLI
 
 ```bash
-# Start the API server
+# Apply SQLite migrations and start the local API server
+agenticu migrate
 agenticu server
 
-# Apply PostgreSQL schema
-agenticu migrate --dsn postgresql://user:pass@localhost:5432/agenticu
+# Use the same PostgreSQL DSN for migrations and the API server
+export AGENTICU__STORAGE__DSN=postgresql://user:pass@localhost:5432/agenticu
+agenticu migrate
+agenticu server
 
 # Health check
 agenticu check
@@ -205,6 +230,8 @@ docker compose up
 | Route | Method | Description |
 |-------|--------|-------------|
 | `/health` | GET | Health check |
+| `/v1/traces` | POST | OTLP/HTTP trace ingestion, protobuf or JSON |
+| `/ingest` | POST | Debug JSON ingestion, e.g. `{"spans":[{"trace_id":"demo","span_id":"first"}]}` |
 | `/api/v1/traces` | GET | List traces (filter: agent_id, status) |
 | `/api/v1/traces/{id}` | GET | Get trace detail |
 | `/api/v1/failures` | GET | List failures (filter: mode, agent) |
@@ -217,7 +244,12 @@ docker compose up
 
 ## Configuration
 
-See `config.yaml`. Override via environment variables (`AGENTICU__{SECTION}__{KEY}`).
+See `config.yaml`. Override settings with `AGENTICU__{SECTION}__{KEY}`.
+The CLI uses SQLite at `agenticu.db` by default. A nonempty
+`AGENTICU__STORAGE__DSN` selects PostgreSQL and requires the `postgres` extra.
+Set both the DSN and `AGENTICU__STORAGE__SQLITE_PATH` to empty strings to use
+in-memory storage. Docker Compose runs migrations in a one-shot service before
+starting the API.
 
 ## Development
 

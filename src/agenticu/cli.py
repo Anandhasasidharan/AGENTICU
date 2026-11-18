@@ -5,7 +5,6 @@ import asyncio
 import logging
 import os
 import sys
-from pathlib import Path
 
 logger = logging.getLogger("agenticu")
 
@@ -35,24 +34,25 @@ def main() -> None:
     migrate = sub.add_parser("migrate", help="Apply database schema")
     migrate.add_argument(
         "--dsn",
-        default=os.environ.get("AGENTICU__STORAGE__DSN", "postgresql://localhost:5432/agenticu"),
+        default=None,
         help="PostgreSQL DSN",
     )
+    migrate.add_argument("--sqlite-path", default=None, help="SQLite database path")
     migrate.add_argument(
         "--schema",
         default=None,
-        help="Path to a schema.sql (default: the schema bundled with the package)",
+        help="Apply a custom PostgreSQL SQL file",
     )
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     if args.command == "server":
-        _run_server()
+        asyncio.run(_run_server())
     elif args.command == "tui":
         _run_tui(server=args.server, api_key=args.api_key)
     elif args.command == "migrate":
-        asyncio.run(_run_migrate(args.dsn, args.schema))
+        asyncio.run(_run_migrate(args.dsn, args.schema, args.sqlite_path))
     elif args.command == "check":
         asyncio.run(_run_check())
     else:
@@ -60,14 +60,14 @@ def main() -> None:
         sys.exit(1)
 
 
-def _run_server() -> None:
+async def _run_server() -> None:
     import uvicorn
 
     from agenticu.api.config import load_config
     from agenticu.api.routes import create_app
     from agenticu.attribution.causal_attributor import CausalAttributor
     from agenticu.classification.classifier import Classifier
-    from agenticu.collector.storage import TraceStore
+    from agenticu.collector.database import open_store
     from agenticu.forecast.forecaster import Forecaster
     from agenticu.forecast.outcome_tracker import OutcomeTracker
     from agenticu.forecast.transition_model import TransitionModel
@@ -77,59 +77,52 @@ def _run_server() -> None:
     cfg = load_config()
     api_cfg = cfg["agenticu"]["api"]
 
-    store = TraceStore()
-    metrics = MetricsTracker()
-    runner = PlaybookRunner(store=store, metrics=metrics)
-    transition_model = TransitionModel()
-    classifier = Classifier(fast_path_only=True)
-    forecaster = Forecaster(model=transition_model)
-    attributor = CausalAttributor(store=store)
-    tracker = OutcomeTracker(
-        store=store,
-        transition_model=transition_model,
-        classifier=classifier,
-        interval_secs=60,
-        min_new_traces=5,
-    )
-    app = create_app(
-        store=store,
-        runner=runner,
-        metrics=metrics,
-        cors_origins=api_cfg.get("cors_origins", ["http://localhost:3000"]),
-        api_key=api_cfg.get("api_key", ""),
-        attributor=attributor,
-        forecaster=forecaster,
-        outcome_tracker=tracker,
-    )
+    async with open_store(cfg["agenticu"]["storage"]) as store:
+        metrics = MetricsTracker()
+        runner = PlaybookRunner(store=store, metrics=metrics)
+        transition_model = TransitionModel()
+        classifier = Classifier(fast_path_only=True)
+        forecaster = Forecaster(model=transition_model)
+        attributor = CausalAttributor(store=store)
+        tracker = OutcomeTracker(
+            store=store,
+            transition_model=transition_model,
+            classifier=classifier,
+            interval_secs=60,
+            min_new_traces=5,
+        )
+        app = create_app(
+            store=store,
+            runner=runner,
+            metrics=metrics,
+            cors_origins=api_cfg.get("cors_origins", ["http://localhost:3000"]),
+            api_key=api_cfg.get("api_key", ""),
+            attributor=attributor,
+            forecaster=forecaster,
+            outcome_tracker=tracker,
+        )
 
-    logger.info("Starting AgentICU server on %s:%s", api_cfg["host"], api_cfg["port"])
-    uvicorn.run(app, host=api_cfg["host"], port=api_cfg["port"], log_level="info")
+        logger.info("Starting AgentICU server on %s:%s", api_cfg["host"], api_cfg["port"])
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=api_cfg["host"], port=api_cfg["port"], log_level="info")
+        )
+        await server.serve()
 
 
-async def _run_migrate(dsn: str, schema_path: str | None) -> None:
-    try:
-        import asyncpg
-    except ImportError:
-        logger.error("asyncpg is required. Install: pip install agenticu[postgres]")
-        sys.exit(1)
+async def _run_migrate(
+    dsn: str | None, schema_path: str | None, sqlite_path: str | None = None
+) -> None:
+    from agenticu.api.config import load_config
+    from agenticu.collector.database import migrate_store
 
-    if schema_path:
-        path = Path(schema_path)
-        if not path.exists():
-            logger.error("Schema file not found: %s", schema_path)
-            sys.exit(1)
-        sql = path.read_text()
-    else:
-        from importlib.resources import files
+    config = load_config()["agenticu"]["storage"]
+    if sqlite_path is not None:
+        config.update(dsn="", sqlite_path=sqlite_path)
+    if dsn is not None:
+        config["dsn"] = dsn
 
-        sql = (files("agenticu") / "schema.sql").read_text()
-
-    conn = await asyncpg.connect(dsn)
-    try:
-        await conn.execute(sql)
-        logger.info("Schema applied successfully")
-    finally:
-        await conn.close()
+    await migrate_store(config, schema_path)
+    logger.info("Schema migrations applied")
 
 
 def _run_tui(server: str | None, api_key: str | None) -> None:

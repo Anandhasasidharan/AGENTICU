@@ -1,6 +1,7 @@
 __version__ = "0.1.1"
 
 from agenticu.attribution.causal_attributor import CausalAttributor
+from agenticu.collector.http_exporter import AgentICUHTTPExporter
 from agenticu.context import get_current_span_id, get_current_trace_id
 from agenticu.decorators import decision, handoff, tool_call, trace
 from agenticu.forecast.forecaster import Forecaster
@@ -14,6 +15,7 @@ from agenticu.models import (
 )
 
 __all__ = [
+    "AgentICUHTTPExporter",
     "trace",
     "tool_call",
     "handoff",

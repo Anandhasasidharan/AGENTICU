@@ -283,7 +283,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AGENTICU__API__PORT", value = "8000" },
     ]
     secrets = [
-      { name = "AGENTICU__DB_PASSWORD", valueFrom = aws_secretsmanager_secret.db.arn },
+      { name = "AGENTICU__STORAGE__PASSWORD", valueFrom = aws_secretsmanager_secret.db.arn },
       { name = "AGENTICU__API__KEY", valueFrom = aws_secretsmanager_secret.api_key.arn },
     ]
     logConfiguration = {

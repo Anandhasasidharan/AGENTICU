@@ -11,7 +11,7 @@ RUN groupadd -r agenticu && useradd -r -g agenticu agenticu
 WORKDIR /app
 
 COPY --from=builder /build/dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
+RUN set -- /tmp/agenticu-*.whl && pip install --no-cache-dir "$1[postgres]" && rm "$1"
 
 COPY config.yaml /app/config.yaml
 
