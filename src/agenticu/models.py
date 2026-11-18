@@ -92,6 +92,13 @@ class Span:
     error_message: str | None = None
 
 
+class RecoveryOutcome(StrEnum):
+    RECOVERED = "recovered"
+    RETRIED = "retried"
+    FAILED = "failed"
+    ESCALATED = "escalated"
+
+
 @dataclass
 class RecoveryAttempt:
     attempt_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -105,6 +112,7 @@ class RecoveryAttempt:
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
     error_message: str | None = None
+    outcome: RecoveryOutcome | None = None
 
 
 @dataclass

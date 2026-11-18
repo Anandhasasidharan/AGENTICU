@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import asdict
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -125,24 +126,49 @@ def create_app(
         spans = await store.get_trace_by_id(req.trace_id)
         if not spans:
             raise HTTPException(404, "Trace not found")
-        last_span = spans[-1]
-        attempt = await runner.run(last_span, mode)
+        last_span = next((span for span in reversed(spans) if span.failure_mode == mode), spans[-1])
+        attribution = (
+            await attributor.attribute(req.trace_id, last_span.span_id) if attributor else None
+        )
+        directive = await runner.directive(
+            last_span, mode, attribution.root_agent_id if attribution else None
+        )
+        if directive is None:
+            raise HTTPException(404, "Recovery playbook not found")
+        strategy, action = directive
         return {
-            "attempt_id": attempt.attempt_id,
-            "success": attempt.success,
-            "strategy": attempt.strategy,
-            "error": attempt.error_message,
+            "attempt_id": None,
+            "success": None,
+            "strategy": strategy,
+            "error": None,
+            "directive": asdict(action),
         }
+
+    @app.get("/api/v1/recovery-attempts")
+    async def list_recovery_attempts(
+        trace_id: str | None = None, limit: int = Query(100, ge=1, le=500)
+    ):
+        return {"attempts": await store.get_recovery_attempts(trace_id, limit=limit)}
 
     @app.get("/api/v1/metrics/recovery")
     async def recovery_metrics():
         stats = await store.get_recovery_stats()
+        breakdown = await store.get_recovery_breakdown()
+        by_mode = metrics.count_by_mode()
+        for group in breakdown:
+            mode = group["failure_mode"]
+            total, recovered = group["total"], group["recovered"]
+            row = by_mode.setdefault(mode, {"total": 0, "succeeded": 0, "failed": 0})
+            row["total"] += total
+            row["succeeded"] += recovered
+            row["failed"] += total - recovered
         return {
             "total": stats["total"],
             "succeeded": stats["succeeded"],
             "failed": stats["failed"],
             "success_rate": stats["succeeded"] / stats["total"] if stats["total"] > 0 else 0.0,
-            "by_mode": metrics.count_by_mode(),
+            "by_mode": by_mode,
+            "by_strategy_and_mode": breakdown,
         }
 
     if attributor is not None:

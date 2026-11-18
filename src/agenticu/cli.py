@@ -105,7 +105,12 @@ async def _run_server() -> None:
             min_new_traces=5,
         )
         pipeline = IngestionPipeline(
-            store, classifier, attributor, escalation, auto_recover=recovery["auto_recover"]
+            store,
+            classifier,
+            attributor,
+            escalation,
+            auto_recover=recovery["auto_recover"],
+            escalate_after=recovery["escalate_after"],
         )
         app = create_app(
             store=store,

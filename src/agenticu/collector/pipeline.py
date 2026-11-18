@@ -6,13 +6,17 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import datetime, timezone
+from uuid import NAMESPACE_URL, uuid5
 
 from agenticu import metrics
 from agenticu.attribution.causal_attributor import CausalAttributor
 from agenticu.classification.classifier import Classifier
 from agenticu.collector.storage import TraceStore
-from agenticu.models import Span, SpanStatus
+from agenticu.models import RecoveryOutcome, Span, SpanStatus
 from agenticu.recovery.escalation import EscalationService
+from agenticu.recovery.outcomes import read_events
 from agenticu.recovery.playbook_registry import get_playbook
 
 logger = logging.getLogger(__name__)
@@ -29,6 +33,7 @@ class IngestionPipeline:
         escalation: EscalationService,
         *,
         auto_recover: bool = True,
+        escalate_after: int = 2,
         queue_size: int = 100,
     ):
         self.store = store
@@ -36,6 +41,7 @@ class IngestionPipeline:
         self.attributor = attributor
         self.escalation = escalation
         self.auto_recover = auto_recover
+        self.escalate_after = max(1, escalate_after)
         self.queue: asyncio.Queue[list[Span]] = asyncio.Queue(maxsize=queue_size)
 
     async def submit(self, spans: list[Span]) -> None:
@@ -89,25 +95,46 @@ class IngestionPipeline:
                 severity=severity,
                 timestamp=span.end_time or span.start_time,
             )
-            if not created:
-                continue
-            metrics.record_failure(span.failure_mode, span.agent_id)
+            if created:
+                metrics.record_failure(span.failure_mode, span.agent_id)
 
-            if self.auto_recover and get_playbook(span.failure_mode) is not None:
-                logger.info(
-                    "Recovery playbook available for trace %s mode %s",
-                    span.trace_id,
-                    span.failure_mode.value,
-                )
-                continue
+            reports = read_events(span)
+            repeated_failures = 0
+            for attempt, repeated in sorted(reports, key=lambda pair: pair[0].attempt_number):
+                if await self.store.insert_recovery(attempt):
+                    metrics.record_recovery_attempt(attempt)
+                if repeated:
+                    repeated_failures += 1
+                if (
+                    attempt.outcome == RecoveryOutcome.FAILED
+                    and repeated_failures >= self.escalate_after
+                ):
+                    escalation = replace(
+                        attempt,
+                        attempt_id=str(
+                            uuid5(NAMESPACE_URL, f"agenticu:escalate:{attempt.attempt_id}")
+                        ),
+                        outcome=RecoveryOutcome.ESCALATED,
+                        success=None,
+                        started_at=datetime.now(timezone.utc),
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    if await self.store.insert_recovery(escalation):
+                        await self._escalate(span, attempt.error_message or "Recovery failed")
+                    break
 
-            result = await self.attributor.attribute(span.trace_id, span.span_id)
-            reason = (
-                "No recovery playbook registered" if self.auto_recover else "Auto-recovery disabled"
-            )
-            await self.escalation(
-                span=span,
-                failure_mode=span.failure_mode,
-                reason=reason,
-                root_agent_id=result.root_agent_id,
-            )
+            if created and not reports:
+                if not self.auto_recover:
+                    await self._escalate(span, "Auto-recovery disabled")
+                elif get_playbook(span.failure_mode) is None:
+                    await self._escalate(span, "No recovery playbook registered")
+
+    async def _escalate(self, span: Span, reason: str) -> None:
+        result = await self.attributor.attribute(span.trace_id, span.span_id)
+        await self.escalation(
+            span=span,
+            failure_mode=span.failure_mode,
+            reason=reason,
+            root_agent_id=result.root_agent_id,
+            trace=await self.store.get_trace_by_id(span.trace_id),
+        )

@@ -48,15 +48,16 @@ async def recover_disobey_task_spec(span: Span, store: Any, **kwargs: Any) -> Re
     and constructs a recovery instruction with the actual original spec.
     """
     logger.info("Recovering DisobeyTaskSpec for span %s", span.span_id)
-    task_spec: str | None = None
-    try:
-        trace_spans = await store.get_trace_by_id(span.trace_id)
-        for s in sorted(trace_spans, key=lambda x: x.start_time):
-            if s.attributes and s.attributes.get("agenticu.task_spec"):
-                task_spec = s.attributes["agenticu.task_spec"]
-                break
-    except Exception:
-        pass
+    task_spec = span.attributes.get("agenticu.task_spec")
+    if not task_spec:
+        try:
+            trace_spans = await store.get_trace_by_id(span.trace_id)
+            for s in sorted(trace_spans, key=lambda x: x.start_time):
+                if s.attributes and s.attributes.get("agenticu.task_spec"):
+                    task_spec = s.attributes["agenticu.task_spec"]
+                    break
+        except Exception:
+            pass
 
     spec_clause = f" Original spec: '{task_spec}'." if task_spec else ""
     return RecoveryAction(

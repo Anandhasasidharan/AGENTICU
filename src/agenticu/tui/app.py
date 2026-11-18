@@ -307,6 +307,10 @@ class AgentICUApp(App):
         except TUIError as e:
             log.write(f"[red]Error: {e}[/red]")
             return
+        if directive := r.get("directive"):
+            log.write(f"Recovery directive • {r.get('strategy')}")
+            log.write(str(directive["instructions"]))
+            return
         status = "[green]SUCCESS[/green]" if r.get("success") else "[red]FAILED[/red]"
         log.write(
             f"Recovery {status}\n"

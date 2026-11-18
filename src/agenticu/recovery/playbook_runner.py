@@ -31,6 +31,16 @@ class PlaybookRunner:
         self.cooldown_seconds = cooldown_seconds
         self.escalation_hook = escalation_hook
 
+    async def directive(
+        self, span: Span, failure_mode: FailureMode, root_agent_id: str | None = None
+    ) -> tuple[str, RecoveryAction] | None:
+        playbook = get_playbook(failure_mode)
+        if playbook is None:
+            return None
+        action = await playbook(span=span, store=self.store, root_agent_id=root_agent_id)
+        action.target_agent_id = action.target_agent_id or root_agent_id or span.agent_id
+        return playbook.__name__, action
+
     async def run(
         self,
         span: Span,

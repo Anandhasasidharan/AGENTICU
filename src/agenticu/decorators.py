@@ -25,6 +25,7 @@ from agenticu.models import (
     SpanStatus,
 )
 from agenticu.recovery.playbook_registry import get_playbook
+from agenticu.recovery.sdk import UNRECOVERED, OnFailure, apply_recovery, run_sync_recovery
 
 F = TypeVar("F", bound=Callable[..., Any])
 TRACER = otel_trace.get_tracer("agenticu")
@@ -59,7 +60,8 @@ def trace(
     classifier: Classifier | None = None,
     store: TraceStore | None = None,
     attributor: CausalAttributor | None = None,
-    max_retries: int = 1,
+    max_retries: int | None = None,
+    on_failure: OnFailure | None = None,
 ) -> Callable[[F], F]:
     def decorator(func: F) -> F:
         @functools.wraps(func)
@@ -72,6 +74,8 @@ def trace(
                 trace_id=ctx.trace_id,
                 parent_span_id=ctx.span_id,
                 agent_id=agent_id or ctx.agent_id,
+                task_spec=ctx.task_spec,
+                attributes=ctx.attributes.copy(),
             )
 
             with ContextScope(span_ctx):
@@ -84,19 +88,42 @@ def trace(
                     kind=SpanKind.INTERNAL,
                     attributes=otel_attrs,
                 ) as otel_span:
+                    span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                     try:
                         result = func(*args, **kwargs)
                         if record_output:
                             otel_span.set_attribute("agenticu.output", str(result)[:2000])
                         otel_span.set_status(Status(StatusCode.OK))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                         return result
                     except BaseException as e:
                         otel_span.set_attribute("agenticu.error", str(e))
                         otel_span.set_attribute("agenticu.traceback", traceback.format_exc())
                         otel_span.set_status(Status(StatusCode.ERROR, str(e)))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
-                        if classifier and store:
+                        if on_failure is not None and isinstance(e, Exception):
+
+                            async def retry() -> Any:
+                                return func(*args, **kwargs)
+
+                            recovered = run_sync_recovery(
+                                _recover_with_hook(
+                                    retry,
+                                    span_ctx,
+                                    e,
+                                    otel_span,
+                                    on_failure,
+                                    classifier,
+                                    store,
+                                    attributor,
+                                    max_retries,
+                                )
+                            )
+                            if recovered is not UNRECOVERED:
+                                if record_output:
+                                    otel_span.set_attribute(
+                                        "agenticu.output", str(recovered)[:2000]
+                                    )
+                                return recovered
+                        elif classifier and store:
                             recovered = _try_inline_recovery(
                                 func,
                                 args,
@@ -108,7 +135,7 @@ def trace(
                                 classifier,
                                 store,
                                 attributor,
-                                max_retries,
+                                1 if max_retries is None else max_retries,
                             )
                             if recovered is not None:
                                 return recovered
@@ -124,6 +151,8 @@ def trace(
                 trace_id=ctx.trace_id,
                 parent_span_id=ctx.span_id,
                 agent_id=agent_id or ctx.agent_id,
+                task_spec=ctx.task_spec,
+                attributes=ctx.attributes.copy(),
             )
 
             with ContextScope(span_ctx):
@@ -136,19 +165,40 @@ def trace(
                     kind=SpanKind.INTERNAL,
                     attributes=otel_attrs,
                 ) as otel_span:
+                    span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                     try:
                         result = await func(*args, **kwargs)
                         if record_output:
                             otel_span.set_attribute("agenticu.output", str(result)[:2000])
                         otel_span.set_status(Status(StatusCode.OK))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
                         return result
                     except BaseException as e:
                         otel_span.set_attribute("agenticu.error", str(e))
                         otel_span.set_attribute("agenticu.traceback", traceback.format_exc())
                         otel_span.set_status(Status(StatusCode.ERROR, str(e)))
-                        span_ctx.span_id = format(otel_span.get_span_context().span_id, "016x")
-                        if classifier and store:
+                        if on_failure is not None and isinstance(e, Exception):
+
+                            async def retry() -> Any:
+                                return await func(*args, **kwargs)
+
+                            recovered = await _recover_with_hook(
+                                retry,
+                                span_ctx,
+                                e,
+                                otel_span,
+                                on_failure,
+                                classifier,
+                                store,
+                                attributor,
+                                max_retries,
+                            )
+                            if recovered is not UNRECOVERED:
+                                if record_output:
+                                    otel_span.set_attribute(
+                                        "agenticu.output", str(recovered)[:2000]
+                                    )
+                                return recovered
+                        elif classifier and store:
                             recovered = await _try_inline_recovery_async(
                                 func,
                                 args,
@@ -160,7 +210,7 @@ def trace(
                                 classifier,
                                 store,
                                 attributor,
-                                max_retries,
+                                1 if max_retries is None else max_retries,
                             )
                             if recovered is not None:
                                 return recovered
@@ -171,6 +221,31 @@ def trace(
         return sync_wrapper  # type: ignore
 
     return decorator
+
+
+async def _recover_with_hook(
+    retry: Callable,
+    context: AgentContext,
+    error: Exception,
+    telemetry: Any,
+    on_failure: OnFailure,
+    classifier: Classifier | None,
+    store: TraceStore | None,
+    attributor: CausalAttributor | None,
+    max_retries: int | None,
+) -> Any:
+    failure = Span(
+        trace_id=context.trace_id,
+        span_id=context.span_id or "",
+        parent_span_id=context.parent_span_id,
+        agent_id=context.agent_id,
+        status=SpanStatus.FAILURE,
+        error_message=str(error),
+        attributes={"agenticu.task_spec": context.task_spec} if context.task_spec else {},
+    )
+    return await apply_recovery(
+        retry, failure, telemetry, on_failure, classifier, store, attributor, max_retries
+    )
 
 
 async def _run_playbook(

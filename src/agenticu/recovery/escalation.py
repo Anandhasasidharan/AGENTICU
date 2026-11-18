@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import asdict
 from typing import Any
 
 import httpx
@@ -34,13 +36,23 @@ class EscalationService:
         failure_mode: FailureMode,
         reason: str,
         root_agent_id: str | None = None,
+        trace: list[Span] | None = None,
     ) -> None:
         payload = self._build_payload(span, failure_mode, reason, root_agent_id)
+        if trace is not None:
+            payload["trace"] = json.loads(json.dumps([asdict(item) for item in trace], default=str))
+        logger.warning("Escalating trace %s mode %s: %s", span.trace_id, failure_mode.value, reason)
 
-        if self.slack_webhook:
-            await self._send_slack(payload)
-        if self.pagerduty_key:
-            await self._send_pagerduty(payload)
+        try:
+            if self.slack_webhook:
+                await self._send_slack(payload)
+        except httpx.HTTPError:
+            logger.exception("Slack escalation delivery failed")
+        try:
+            if self.pagerduty_key:
+                await self._send_pagerduty(payload)
+        except httpx.HTTPError:
+            logger.exception("PagerDuty escalation delivery failed")
 
         for hook in self._custom_hooks:
             try:
@@ -98,7 +110,19 @@ class EscalationService:
             )
 
         async with httpx.AsyncClient() as client:
-            await client.post(self.slack_webhook, json={"blocks": blocks})
+            response = await client.post(self.slack_webhook, json={"blocks": blocks})
+            response.raise_for_status()
+            if "trace" in payload:
+                trace = json.dumps(payload["trace"], ensure_ascii=True)
+                chunks = [trace[start : start + 2400] for start in range(0, len(trace), 2400)]
+                for index, chunk in enumerate(chunks, 1):
+                    response = await client.post(
+                        self.slack_webhook,
+                        json={
+                            "text": f"Trace {payload['trace_id']} ({index}/{len(chunks)})\n{chunk}"
+                        },
+                    )
+                    response.raise_for_status()
 
     async def _send_pagerduty(self, payload: dict[str, Any]) -> None:
         body = {
@@ -112,8 +136,9 @@ class EscalationService:
             },
         }
         async with httpx.AsyncClient() as client:
-            await client.post(
+            response = await client.post(
                 "https://events.pagerduty.com/v2/enqueue",
                 json=body,
                 headers={"Content-Type": "application/json"},
             )
+            response.raise_for_status()

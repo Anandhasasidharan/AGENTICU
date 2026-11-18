@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,6 +10,7 @@ from agenticu.models import (
     FAILURE_CATEGORY_MAP,
     FailureMode,
     RecoveryAttempt,
+    RecoveryOutcome,
     Span,
     SpanEvent,
     SpanStatus,
@@ -243,14 +245,15 @@ class TraceStore:
     # Recovery operations
     # ------------------------------------------------------------------ #
 
-    async def insert_recovery(self, attempt: RecoveryAttempt) -> None:
+    async def insert_recovery(self, attempt: RecoveryAttempt) -> bool:
         if self._pool:
-            await self._pool.execute(
+            row = await self._pool.fetchrow(
                 """
                 INSERT INTO recovery_attempts (id, trace_id, span_id, failure_mode,
-                                               attempt_number, strategy, success,
-                                               started_at, completed_at, error_message)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                               attempt_number, strategy, success, started_at,
+                                               completed_at, error_message, outcome, root_agent_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (id) DO NOTHING RETURNING id
                 """,
                 attempt.attempt_id,
                 attempt.trace_id,
@@ -262,9 +265,75 @@ class TraceStore:
                 attempt.started_at,
                 attempt.completed_at,
                 attempt.error_message,
+                attempt.outcome.value if attempt.outcome else None,
+                attempt.root_agent_id,
             )
-            return
+            return row is not None
+        if any(saved.attempt_id == attempt.attempt_id for saved in self._recoveries):
+            return False
         self._recoveries.append(attempt)
+        return True
+
+    async def get_recovery_attempts(
+        self, trace_id: str | None = None, *, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        if self._pool:
+            rows = await self._pool.fetch(
+                """
+                SELECT id AS attempt_id, trace_id, span_id, failure_mode, attempt_number, strategy,
+                       success, started_at, completed_at, error_message, outcome, root_agent_id
+                FROM recovery_attempts
+                WHERE CAST($1 AS TEXT) IS NULL OR trace_id = $1
+                ORDER BY started_at DESC, attempt_number DESC LIMIT $2
+                """,
+                trace_id,
+                limit,
+            )
+            records = [dict(row) for row in rows]
+            for record in records:
+                if record["success"] is not None:
+                    record["success"] = bool(record["success"])
+                for field in ("started_at", "completed_at"):
+                    record[field] = _read_timestamp(record[field])
+            return records
+        attempts = [
+            attempt
+            for attempt in self._recoveries
+            if trace_id is None or attempt.trace_id == trace_id
+        ]
+        attempts.sort(
+            key=lambda attempt: (attempt.started_at, attempt.attempt_number), reverse=True
+        )
+        return [asdict(attempt) for attempt in attempts[:limit]]
+
+    async def get_recovery_breakdown(self) -> list[dict[str, Any]]:
+        if self._pool:
+            rows = await self._pool.fetch(
+                """
+                SELECT strategy, failure_mode, COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE outcome = 'recovered') AS recovered
+                FROM recovery_attempts
+                WHERE outcome IN ('recovered', 'retried', 'failed')
+                GROUP BY strategy, failure_mode ORDER BY strategy, failure_mode
+                """
+            )
+            groups = [dict(row) for row in rows]
+        else:
+            counts: dict[tuple[str, str | None], dict[str, Any]] = {}
+            for attempt in self._recoveries:
+                if attempt.outcome in (None, RecoveryOutcome.ESCALATED):
+                    continue
+                key = (attempt.strategy, attempt.failure_mode)
+                row = counts.setdefault(
+                    key, {"strategy": key[0], "failure_mode": key[1], "total": 0, "recovered": 0}
+                )
+                row["total"] += 1
+                row["recovered"] += attempt.outcome == RecoveryOutcome.RECOVERED
+            groups = list(counts.values())
+        for group in groups:
+            group["success_rate"] = group["recovered"] / group["total"]
+            group["below_threshold"] = group["success_rate"] < 0.5
+        return groups
 
     async def get_recovery_stats(self) -> dict[str, Any]:
         if self._pool:
@@ -275,12 +344,14 @@ class TraceStore:
                     COUNT(*) FILTER (WHERE success = true) AS succeeded,
                     COUNT(*) FILTER (WHERE success = false) AS failed
                 FROM recovery_attempts
+                WHERE outcome IS NULL OR outcome <> 'escalated'
                 """
             )
             return dict(row) if row else {"total": 0, "succeeded": 0, "failed": 0}
-        total = len(self._recoveries)
-        succeeded = sum(1 for r in self._recoveries if r.success)
-        return {"total": total, "succeeded": succeeded, "failed": total - succeeded}
+        attempts = [r for r in self._recoveries if r.outcome != RecoveryOutcome.ESCALATED]
+        succeeded = sum(1 for r in attempts if r.success)
+        failed = sum(1 for r in attempts if r.success is False)
+        return {"total": len(attempts), "succeeded": succeeded, "failed": failed}
 
 
 def _read_timestamp(value: datetime | str | None) -> datetime | None:

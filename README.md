@@ -87,6 +87,36 @@ a crash can lose batches still in the queue. The server classifies error spans
 with the MAST rules and records their category and severity. Forecast and
 attribution endpoints use persisted traces.
 
+### Apply recovery in your agent
+
+Pass an `on_failure` callback to `@trace`. It gets a `RecoveryAction` with
+instructions, a target agent, and any available playbook payload. Apply the
+directive to your application's state before the SDK retries the function.
+
+```python
+from agenticu import trace
+
+state = {"skip_completed_steps": False}
+
+def apply_recovery(action):
+    state["skip_completed_steps"] = True
+    return action.should_retry
+
+@trace(agent_id="planner", on_failure=apply_recovery)
+def run_planner():
+    if not state["skip_completed_steps"]:
+        raise RuntimeError("Agent kept repeating the same step")
+    return "Proceed with the next step"
+```
+
+Return `True` or `False` to decide whether to retry, or `None` to use the
+playbook's recommendation. Pass a `TraceStore` to the decorator when
+playbooks need local checkpoints. Configure `auto_recover`, `max_retries`,
+and `escalate_after` in the agent and server environments. The SDK sends
+outcomes with the trace. Use `GET /api/v1/recovery-attempts?trace_id=...` to
+inspect attempts and `GET /api/v1/metrics/recovery` for strategy success rates.
+Set an escalation webhook to receive traces after repeated failures.
+
 ## Features
 
 | Feature | Description |
@@ -209,7 +239,7 @@ extra: `pip install "agenticu[tui]"`, included in the npm install):
 - **Failures** — filter by MAST mode / agent
 - **Forecast** — predict P(failure) for any `source → target` handoff
 - **Attribution** — trace a failure back to its root-cause agent
-- **Recover** — trigger a recovery playbook for a trace + failure mode
+- **Recover** — prepare a recovery directive for a trace and failure mode
 
 ## AWS Deploy (OpenTofu)
 
@@ -242,11 +272,12 @@ docker compose up
 | `/api/v1/traces` | GET | List traces (filter: agent_id, status) |
 | `/api/v1/traces/{id}` | GET | Get trace detail |
 | `/api/v1/failures` | GET | List failures (filter: mode, agent) |
-| `/api/v1/recover` | POST | Trigger recovery for a failure |
+| `/api/v1/recover` | POST | Prepare a recovery directive for a failure |
 | `/api/v1/forecast` | GET | Predict failure probability for a handoff (source/target agents) |
 | `/api/v1/forecast/trace` | GET | Forecast failure probability at every handoff in a trace |
 | `/api/v1/attribution` | GET | Attribute a failure to its root-cause agent |
-| `/api/v1/metrics/recovery` | GET | Recovery success metrics |
+| `/api/v1/recovery-attempts` | GET | Recorded attempts and outcomes (filter by trace ID) |
+| `/api/v1/metrics/recovery` | GET | Success rates by strategy and MAST mode |
 | `/metrics` | GET | Prometheus metrics |
 
 ## Configuration
