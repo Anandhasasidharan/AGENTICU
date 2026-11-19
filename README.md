@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/agenticu)](https://pypi.org/project/agenticu/)
 [![Python](https://img.shields.io/pypi/pyversions/agenticu)](https://pypi.org/project/agenticu/)
 
-Instrument multi-agent LLM systems with Python decorators. AgentICU captures structured traces via OpenTelemetry, classifies failures in real-time using the **MAST taxonomy** (14 failure modes across 3 categories), runs automated recovery playbooks, and escalates when recovery fails.
+Instrument multi-agent LLM systems with Python decorators. AgentICU captures OpenTelemetry traces, classifies error spans using experimental rules for the 14 **MAST** failure modes, and records what happens when an agent applies a recovery playbook. Configure a webhook to escalate repeated recovery failures.
 
 Based on the MAST paper (NeurIPS 2025 Spotlight) — analysis of 1,642 agent traces across 7 frameworks found a 41–86.7% failure rate, with **79% of failures** caused by specification ambiguity (44.2%) and coordination breakdowns (32.3%).
 
@@ -125,8 +125,8 @@ Set an escalation webhook to receive traces after repeated failures.
 | **MAST Classifier** | Experimental rule-based detection across 14 failure modes |
 | **PROMAS Forecaster** | Markov transition model learns from your traces and predicts failure probability *before* each handoff |
 | **Causal Attribution** | Traces a failure back through the handoff/decision chain to the **root-cause agent**, not just the one holding the bag |
-| **Auto-Recovery** | 14 playbooks — structured `RecoveryAction` with retry logic, routed to the root-cause agent |
-| **Inline Recovery** | `@trace(classifier=..., store=..., attributor=...)` — catch, classify, attribute, playbook, retry in one decorator |
+| **Auto-Recovery** | 14 playbooks provide structured directives to an SDK `on_failure` callback |
+| **Recovery Outcomes** | The SDK reports actual retry results. The API shows outcomes and success rates by mode and strategy. |
 | **API Server** | FastAPI — query traces, list failures, trigger recovery, forecast, attribute, Prometheus metrics |
 | **CLI** | `agenticu server`, `agenticu migrate`, `agenticu check`, `agenticu tui` |
 | **TUI Ops Console** | Textual terminal UI — dashboard, traces, failures, forecast, attribution, one-key recovery (`pip install "agenticu[tui]"`) |
@@ -147,7 +147,7 @@ Existing traces (Langfuse / Phoenix / raw OTel) — includes @decision rationale
                ├──────────────► PROMAS-style Forecaster (predicts failure probability ahead of time)
                │
                ▼
-    MAST Classifier (pattern-matching + embedding similarity, both active)
+    MAST Classifier (experimental rules on error spans)
                │
                ▼
     Causal Attribution Layer (traces failure back through handoff chain to root-cause agent)
@@ -156,7 +156,7 @@ Existing traces (Langfuse / Phoenix / raw OTel) — includes @decision rationale
     Recovery Playbook Engine (targets the actual root-cause agent) ──► Escalation
                │
                ▼
-    Outcome Tracking — feeds back into both the forecaster and the classifier
+    Outcome Tracking — stores recovery results and refreshes forecasting
 ```
 
 ### PROMAS Forecaster
@@ -259,12 +259,29 @@ Manager entries, and CloudWatch log groups. Full steps (state bucket, image
 push, DB migrate, TUI against prod, teardown, cost notes) are in
 [`infra/tofu/README.md`](infra/tofu/README.md).
 
-## Docker
+## End-to-end LangGraph demo
+
+Start the API, PostgreSQL, Prometheus, and Grafana. Compose runs the schema
+migrations before starting the API on port 8000.
 
 ```bash
-docker compose up
-# Starts: agenticu on :8000, PostgreSQL, Prometheus on :9090, Grafana on :3000
-# The Grafana datasource + AgentICU dashboard are auto-provisioned.
+docker compose up --build -d
+pip install -e ".[demo]"
+python examples/langgraph_recovery_demo.py --server http://localhost:8000
+```
+
+The LangGraph workflow repeats a completed step. Its SDK hook applies the
+Step Repetition directive and resumes from the saved checkpoint. The demo
+queries the stored MAST 1.3 failure and recovered outcome, then opens the
+Textual app headlessly and confirms that the trace appears in the Failures tab.
+The console prints the trace ID so you can inspect it in `agenticu tui` as well.
+The workflow uses deterministic steps and requires no LLM API key.
+
+Run the same check as part of pytest with the Compose stack running.
+
+```bash
+pip install -e ".[demo,dev]"
+TEST_AGENTICU_COMPOSE_URL=http://localhost:8000 pytest tests/
 ```
 
 ## API

@@ -49,6 +49,7 @@ Documentation = "https://github.com/Anandhasasidharan/AGENTICU#readme"
 classifier = ["sentence-transformers>=3.4"]
 postgres = ["asyncpg>=0.30"]
 tui = ["textual>=0.86"]
+demo = ["agenticu[tui]", "langgraph>=1,<2"]
 all = ["agenticu[classifier,postgres,tui]"]
 dev = [
     "pytest>=9",
