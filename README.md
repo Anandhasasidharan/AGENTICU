@@ -1,325 +1,156 @@
-# AgentICU — Multi-Agent Observability & Auto-Recovery
+# AgentICU
+
+**OpenTelemetry observability and recovery for multi-agent Python workflows.**
 
 [![Tests](https://github.com/Anandhasasidharan/AGENTICU/actions/workflows/ci.yml/badge.svg)](https://github.com/Anandhasasidharan/AGENTICU/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/agenticu)](https://pypi.org/project/agenticu/)
-[![Python](https://img.shields.io/pypi/pyversions/agenticu)](https://pypi.org/project/agenticu/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Instrument multi-agent LLM systems with Python decorators. AgentICU captures OpenTelemetry traces, classifies error spans using experimental rules for the 14 **MAST** failure modes, and records what happens when an agent applies a recovery playbook. Configure a webhook to escalate repeated recovery failures.
+AgentICU collects traces from agents, tool calls, handoffs, and decisions. When
+an error matches one of its experimental MAST rules, an agent can receive a
+recovery directive, apply it to its own state, and retry. AgentICU records the
+outcome so you can inspect the original failure and the retry in one place.
 
-Based on the MAST paper (NeurIPS 2025 Spotlight) — analysis of 1,642 agent traces across 7 frameworks found a 41–86.7% failure rate, with **79% of failures** caused by specification ambiguity (44.2%) and coordination breakdowns (32.3%).
+## Run the end-to-end demo
 
-## Quickstart
-
-```bash
-pip install "agenticu[tui]"
-```
-
-or, if you prefer npm (requires Python >= 3.11 on PATH):
+From a source checkout, use Python 3.11 or newer and Docker Compose.
 
 ```bash
-npm install -g agenticu
-```
-
-| Method | Command | Notes |
-|--------|---------|-------|
-| pip | `pip install "agenticu[tui]"` | Full install incl. terminal UI |
-| pip (slim) | `pip install agenticu` | No TUI; add `[tui]`, `[classifier]`, `[postgres]` as needed |
-| npm | `npm install -g agenticu` | Shim that pip-installs `agenticu[tui]` on first run |
-| docker | `docker compose up` | App + PostgreSQL + Grafana locally |
-| cloud | `tofu -chdir=infra/tofu apply` | AWS: ECS + RDS + ALB + Grafana (see `infra/tofu/README.md`) |
-
-Decorate any agent function — the `@trace` decorator emits OpenTelemetry spans automatically:
-
-```python
-from agenticu import trace, tool_call
-
-@trace(agent_id="researcher")
-async def research_topic(query: str) -> str:
-    results = await search_web(query)
-    return await summarize(results)
-
-@tool_call(return_snapshot=True)
-async def search_web(query: str) -> str:
-    """Simulate a search tool."""
-    return f"Results for: {query}"
-```
-
-Enable **inline auto-recovery** by passing a classifier and store:
-
-```python
-from agenticu import trace
-from agenticu.classification.classifier import Classifier
-from agenticu.collector.storage import TraceStore
-
-@trace(agent_id="researcher", classifier=Classifier(fast_path_only=True), store=TraceStore())
-async def robust_agent(query: str) -> str:
-    # If this raises, AgentICU classifies the error,
-    # runs the matching recovery playbook, and retries
-    return await query_database(query)
-```
-
-### Send traces to a running server
-
-Start a local server with SQLite. Run migrations once before starting the server
-and again after upgrading AgentICU.
-
-```bash
-agenticu migrate
-agenticu server
-```
-
-Run your decorated agent in a separate terminal with one environment setting.
-
-```bash
-AGENTICU_SERVER_URL=http://localhost:8000 python your_agent.py
-```
-
-The SDK installs a batched OpenTelemetry exporter when the first decorated
-agent runs. Set `AGENTICU__API__KEY` in the agent environment if the server
-requires a bearer token. For a custom tracer provider, register
-`agenticu.AgentICUHTTPExporter` with that provider. OpenTelemetry-compatible
-clients can also POST traces directly to `/v1/traces`.
-
-The server validates a batch before queuing it for classification and storage.
-The bounded in-process queue returns HTTP 503 when full and drains during a
-graceful shutdown. Accepted traces may take a moment to become queryable, and
-a crash can lose batches still in the queue. The server classifies error spans
-with the MAST rules and records their category and severity. Forecast and
-attribution endpoints use persisted traces.
-
-### Apply recovery in your agent
-
-Pass an `on_failure` callback to `@trace`. It gets a `RecoveryAction` with
-instructions, a target agent, and any available playbook payload. Apply the
-directive to your application's state before the SDK retries the function.
-
-```python
-from agenticu import trace
-
-state = {"skip_completed_steps": False}
-
-def apply_recovery(action):
-    state["skip_completed_steps"] = True
-    return action.should_retry
-
-@trace(agent_id="planner", on_failure=apply_recovery)
-def run_planner():
-    if not state["skip_completed_steps"]:
-        raise RuntimeError("Agent kept repeating the same step")
-    return "Proceed with the next step"
-```
-
-Return `True` or `False` to decide whether to retry, or `None` to use the
-playbook's recommendation. Pass a `TraceStore` to the decorator when
-playbooks need local checkpoints. Configure `auto_recover`, `max_retries`,
-and `escalate_after` in the agent and server environments. The SDK sends
-outcomes with the trace. Use `GET /api/v1/recovery-attempts?trace_id=...` to
-inspect attempts and `GET /api/v1/metrics/recovery` for strategy success rates.
-Set an escalation webhook to receive traces after repeated failures.
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| **Decorators** | `@trace`, `@tool_call`, `@handoff`, `@decision` — framework-agnostic OTel instrumentation |
-| **MAST Classifier** | Experimental rule-based detection across 14 failure modes |
-| **PROMAS Forecaster** | Markov transition model learns from your traces and predicts failure probability *before* each handoff |
-| **Causal Attribution** | Traces a failure back through the handoff/decision chain to the **root-cause agent**, not just the one holding the bag |
-| **Auto-Recovery** | 14 playbooks provide structured directives to an SDK `on_failure` callback |
-| **Recovery Outcomes** | The SDK reports actual retry results. The API shows outcomes and success rates by mode and strategy. |
-| **API Server** | FastAPI — query traces, list failures, trigger recovery, forecast, attribute, Prometheus metrics |
-| **CLI** | `agenticu server`, `agenticu migrate`, `agenticu check`, `agenticu tui` |
-| **TUI Ops Console** | Textual terminal UI — dashboard, traces, failures, forecast, attribution, one-key recovery (`pip install "agenticu[tui]"`) |
-| **npm Install** | `npm install -g agenticu` — Node shim that installs the Python package on first run |
-| **Docker** | `docker compose up` — app + PostgreSQL + Grafana |
-| **OpenTofu / AWS** | `infra/tofu/` — ECS Fargate + RDS Postgres + ALB + Grafana, S3 backend with native locking |
-| **Escalation** | Slack / PagerDuty when auto-recovery fails (includes root-cause agent) |
-| **Grafana Dashboard** | Pre-built dashboard JSON importable into Grafana |
-
-## Architecture
-
-```
-Existing traces (Langfuse / Phoenix / raw OTel) — includes @decision rationale
-               │
-               ▼
-    AgentICU Adapter Layer (OTel exporter)
-               │
-               ├──────────────► PROMAS-style Forecaster (predicts failure probability ahead of time)
-               │
-               ▼
-    MAST Classifier (experimental rules on error spans)
-               │
-               ▼
-    Causal Attribution Layer (traces failure back through handoff chain to root-cause agent)
-               │
-               ▼
-    Recovery Playbook Engine (targets the actual root-cause agent) ──► Escalation
-               │
-               ▼
-    Outcome Tracking — stores recovery results and refreshes forecasting
-```
-
-### PROMAS Forecaster
-
-Learns transition dynamics from your own collected traces and predicts the
-probability of reaching an error state *before* a handoff completes:
-
-```python
-from agenticu import Forecaster, TransitionModel
-from agenticu.collector.storage import TraceStore
-
-store = TraceStore()
-# ... collect traces ...
-
-model = TransitionModel()
-await model.learn(store)            # rebuild transition matrix from history
-forecaster = Forecaster(model, threshold=0.3)
-
-result = await forecaster.forecast_at_handoff("researcher", "writer")
-print(result.failure_probability)   # 0.0–1.0
-print(result.predicted_mode)        # most likely MAST mode
-print(result.threshold_exceeded)    # trigger early intervention
-```
-
-### Causal Attribution
-
-When a failure is detected, trace it back through the handoff/decision chain to
-the agent that actually *caused* it — critical for pointing the recovery
-playbook at the right target:
-
-```python
-from agenticu import CausalAttributor
-from agenticu.collector.storage import TraceStore
-
-store = TraceStore()
-attributor = CausalAttributor(store)
-
-result = await attributor.attribute(trace_id, failure_span_id)
-print(result.root_agent_id)         # "agent_b" — the true root cause
-print(result.attribution_chain)     # ["agent_a", "agent_b", "agent_c"]
-print(result.confidence)            # 0.0–1.0
-```
-
-## MAST Failure Taxonomy
-
-**All 14 classifier modes are experimental.** Each scored below 0.50 F1 on
-the public trace-level benchmark. The rules can recognize explicit failure
-messages such as the one in the recovery example. See the per-mode scores,
-confusion summary, and evaluation method. [Classifier validation](docs/classifier-validation.md)
-
-| Category | Modes | % of Failures |
-|----------|-------|---------------|
-| Specification | DisobeyTaskSpec, DisobeyRoleSpec, StepRepetition, LossOfHistory, UnawareOfTermination | 44.2% |
-| Coordination | ConversationReset, FailToAskClarification, TaskDerailment, InformationWithholding, IgnoredOtherAgentInput, ReasoningActionMismatch | 32.3% |
-| Verification | PrematureTermination, NoVerification, IncorrectVerification | 23.5% |
-
-## CLI
-
-```bash
-# Apply SQLite migrations and start the local API server
-agenticu migrate
-agenticu server
-
-# Use the same PostgreSQL DSN for migrations and the API server
-export AGENTICU__STORAGE__DSN=postgresql://user:pass@localhost:5432/agenticu
-agenticu migrate
-agenticu server
-
-# Health check
-agenticu check
-
-# Launch the terminal UI ops console (dashboard, traces, failures,
-# forecast, attribution, recovery) — talks to the server above
-agenticu tui
-agenticu tui --server http://prod-host --api-key <key>
-```
-
-## TUI
-
-`agenticu tui` opens a full ops console in your terminal (requires the `tui`
-extra: `pip install "agenticu[tui]"`, included in the npm install):
-
-- **Dashboard** — server health, recovery success rate, OutcomeTracker status (auto-refreshes)
-- **Traces** — filterable span table + trace detail with per-handoff forecasts
-- **Failures** — filter by MAST mode / agent
-- **Forecast** — predict P(failure) for any `source → target` handoff
-- **Attribution** — trace a failure back to its root-cause agent
-- **Recover** — prepare a recovery directive for a trace and failure mode
-
-## AWS Deploy (OpenTofu)
-
-```bash
-cd infra/tofu
-tofu init && tofu plan -var="container_image=<ECR>:latest" -out=tfplan
-tofu apply tfplan
-```
-
-Provisions ECS Fargate (API + Grafana), RDS Postgres, ALB, ECR, Secrets
-Manager entries, and CloudWatch log groups. Full steps (state bucket, image
-push, DB migrate, TUI against prod, teardown, cost notes) are in
-[`infra/tofu/README.md`](infra/tofu/README.md).
-
-## End-to-end LangGraph demo
-
-Start the API, PostgreSQL, Prometheus, and Grafana. Compose runs the schema
-migrations before starting the API on port 8000.
-
-```bash
-docker compose up --build -d
+git clone https://github.com/Anandhasasidharan/AGENTICU.git
+cd AGENTICU
+python -m venv .venv
+source .venv/bin/activate
 pip install -e ".[demo]"
+docker compose up --build -d
+curl --fail --retry 15 --retry-connrefused http://localhost:8000/health
 python examples/langgraph_recovery_demo.py --server http://localhost:8000
 ```
 
-The LangGraph workflow repeats a completed step. Its SDK hook applies the
-Step Repetition directive and resumes from the saved checkpoint. The demo
-queries the stored MAST 1.3 failure and recovered outcome, then opens the
-Textual app headlessly and confirms that the trace appears in the Failures tab.
-The console prints the trace ID so you can inspect it in `agenticu tui` as well.
-The workflow uses deterministic steps and requires no LLM API key.
+The LangGraph agent repeats a completed step. The SDK hook applies the Step
+Repetition directive and resumes the workflow from its checkpoint. The demo
+verifies that MAST mode **1.3** and a **recovered** outcome are persisted in
+PostgreSQL, then checks that the failure appears in the Textual console. It
+runs with deterministic steps and requires no LLM API key.
 
-Run the same check as part of pytest with the Compose stack running.
+The demo prints the trace ID. Open the console to inspect it yourself.
 
 ```bash
-pip install -e ".[demo,dev]"
-TEST_AGENTICU_COMPOSE_URL=http://localhost:8000 pytest tests/
+agenticu tui --server http://localhost:8000
 ```
 
-## API
+## Instrument your agent
 
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/health` | GET | Health check |
-| `/v1/traces` | POST | OTLP/HTTP trace ingestion, protobuf or JSON |
-| `/ingest` | POST | Debug JSON ingestion, e.g. `{"spans":[{"trace_id":"demo","span_id":"first"}]}` |
-| `/api/v1/traces` | GET | List traces (filter: agent_id, status) |
-| `/api/v1/traces/{id}` | GET | Get trace detail |
-| `/api/v1/failures` | GET | List failures (filter: mode, agent) |
-| `/api/v1/recover` | POST | Prepare a recovery directive for a failure |
-| `/api/v1/forecast` | GET | Predict failure probability for a handoff (source/target agents) |
-| `/api/v1/forecast/trace` | GET | Forecast failure probability at every handoff in a trace |
-| `/api/v1/attribution` | GET | Attribute a failure to its root-cause agent |
-| `/api/v1/recovery-attempts` | GET | Recorded attempts and outcomes (filter by trace ID) |
-| `/api/v1/metrics/recovery` | GET | Success rates by strategy and MAST mode |
-| `/metrics` | GET | Prometheus metrics |
+Install the SDK from this checkout with `pip install -e .`. Point your agent at
+a running collector using `AGENTICU_SERVER_URL`. The SDK registers a batched
+OTLP/HTTP exporter on the first traced call.
 
-## Configuration
+```python
+from agenticu import tool_call, trace
 
-See `config.yaml`. Override settings with `AGENTICU__{SECTION}__{KEY}`.
-The CLI uses SQLite at `agenticu.db` by default. A nonempty
-`AGENTICU__STORAGE__DSN` selects PostgreSQL and requires the `postgres` extra.
-Set both the DSN and `AGENTICU__STORAGE__SQLITE_PATH` to empty strings to use
-in-memory storage. Docker Compose runs migrations in a one-shot service before
-starting the API.
+@tool_call()
+def lookup(topic: str) -> str:
+    return f"Notes about {topic}"
+
+@trace(agent_id="researcher")
+def research(topic: str) -> str:
+    return lookup(topic)
+
+print(research("agent handoffs"))
+```
+
+Save the example as `my_agent.py` and run it against the API.
+
+```bash
+AGENTICU_SERVER_URL=http://localhost:8000 python my_agent.py
+```
+
+Use `@handoff` and `@decision` to capture transitions and decision results.
+Applications with their own tracer provider can register
+`AgentICUHTTPExporter` directly. Set `AGENTICU__API__KEY` in the agent
+environment when the collector requires a bearer token.
+
+### Apply a recovery directive
+
+Pass `on_failure=callback` to `@trace`. The callback receives a
+`RecoveryAction` with instructions, a target agent, and any available
+playbook data. Apply it to your application's state before the next call.
+Return `True` to retry, `False` to stop, or `None` to use the playbook's
+recommendation. Supply a local `TraceStore` when a playbook needs access to
+stored checkpoints. [Working LangGraph example](examples/langgraph_recovery_demo.py)
+
+Use the recovery settings `auto_recover`, `max_retries`, and `escalate_after`
+in the agent and server environments. With escalation configured, repeated
+failures in the same mode can send the stored trace to Slack or PagerDuty.
+
+## Run the collector
+
+Docker Compose starts the API, PostgreSQL, Prometheus, and Grafana. A one-shot
+migration job initializes the database before the API starts.
+
+For local development without Compose, use SQLite.
+
+```bash
+pip install -e ".[tui]"
+agenticu migrate
+agenticu server
+```
+
+The default SQLite file is `agenticu.db`. Set `AGENTICU__STORAGE__SQLITE_PATH`
+to choose another path. For PostgreSQL, install the `postgres` extra and set
+`AGENTICU__STORAGE__DSN` for both migrations and the server. An empty DSN and
+SQLite path select in-memory storage. Run `agenticu migrate` before the first
+start and after upgrades that include schema changes. [Configuration](config.yaml) · [AWS deployment](infra/tofu/README.md)
+
+The collector validates incoming batches and queues them for classification and
+storage. A full queue returns HTTP 503. Accepted spans become queryable after
+processing. The queue drains during graceful shutdown, and a crash can lose
+batches still waiting in memory.
+
+## Inspect traces and recovery outcomes
+
+The terminal UI shows server health, traces, failures, handoff forecasts, and
+attribution. Forecasts estimate risk from observed handoff outcomes.
+Attribution uses trace evidence to suggest a likely upstream source of failure.
+The Recover tab prepares a playbook directive for an operator.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/v1/traces` | Receive OTLP/HTTP traces in protobuf or JSON |
+| POST | `/ingest` | Receive a debug batch such as `{"spans":[{"trace_id":"demo","span_id":"first"}]}` |
+| GET | `/api/v1/traces` | List spans, optionally filtered by agent or status |
+| GET | `/api/v1/traces/{id}` | Inspect the spans in a trace |
+| GET | `/api/v1/failures` | List classified failures by agent or MAST mode |
+| POST | `/api/v1/recover` | Prepare a recovery directive for a trace and mode |
+| GET | `/api/v1/recovery-attempts` | List outcomes, optionally filtered by trace ID |
+| GET | `/api/v1/metrics/recovery` | Read success rates by strategy and mode, with a flag below 50% |
+| GET | `/api/v1/forecast` | Estimate failure probability for a source and target agent |
+| GET | `/api/v1/forecast/trace` | Generate handoff forecasts for a stored trace |
+| GET | `/api/v1/attribution` | Find a likely contributing agent for a failure span |
+| GET | `/api/v1/outcome-tracker` | Inspect the forecasting update process |
+| GET | `/health`, `/metrics` | Check server health and scrape Prometheus metrics |
+
+## Classifier validation
+
+**All 14 MAST classifier modes are experimental.** The best per-mode F1 was
+**0.068** on the authors' 1,642 released traces with model-generated labels.
+The benchmark classifies whole trajectories, while the live collector applies
+the rules to individual error spans. The report includes a separate
+human-labeled evaluation, per-mode scores, and the confusion summary.
+[Validation report](docs/classifier-validation.md) · [MAST paper](https://arxiv.org/abs/2503.13657)
 
 ## Development
 
 ```bash
-git clone https://github.com/Anandhasasidharan/AGENTICU
-cd agenticu
-pip install -e ".[dev,all]"
-pytest tests/ -v
+pip install -e ".[dev,tui,postgres]"
+ruff check src tests docs
+pytest
 ```
 
-## License
+To include the live LangGraph test, start the Compose stack, install
+`.[demo,dev]`, and run the suite with the server URL.
 
-MIT
+```bash
+TEST_AGENTICU_COMPOSE_URL=http://localhost:8000 pytest
+```
+
+[Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
