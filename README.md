@@ -11,6 +11,20 @@ an error matches one of its experimental MAST rules, an agent can receive a
 recovery directive, apply it to its own state, and retry. AgentICU records the
 outcome so you can inspect the original failure and the retry in one place.
 
+![AgentICU dashboard showing a healthy server and two successful recovery attempts](docs/images/tui-dashboard.png)
+
+## How it works
+
+```mermaid
+flowchart TD
+    Agent["Instrumented Python agents"] -->|Spans and recovery events| Intake["FastAPI collector<br/>OTLP/HTTP"]
+    Intake -->|Validated batches| Worker["Background worker<br/>MAST classification"]
+    Worker -->|Traces, failures, and outcomes| Store[("PostgreSQL or SQLite")]
+    Store --> Query["Query API<br/>Forecasting and attribution"]
+    Query --> Console["Textual console"]
+    Worker -.->|Escalation when configured| Alerts["Slack or PagerDuty"]
+```
+
 ## Run the end-to-end demo
 
 From a source checkout, use Python 3.11 or newer and Docker Compose.
@@ -31,6 +45,8 @@ Repetition directive and resumes the workflow from its checkpoint. The demo
 verifies that MAST mode **1.3** and a **recovered** outcome are persisted in
 PostgreSQL, then checks that the failure appears in the Textual console. It
 runs with deterministic steps and requires no LLM API key.
+
+![AgentICU Failures tab filtered to MAST mode 1.3 and showing Step Repetition errors from the LangGraph agent](docs/images/tui-failures.png)
 
 The demo prints the trace ID. Open the console to inspect it yourself.
 
@@ -81,6 +97,23 @@ stored checkpoints. [Working LangGraph example](examples/langgraph_recovery_demo
 Use the recovery settings `auto_recover`, `max_retries`, and `escalate_after`
 in the agent and server environments. With escalation configured, repeated
 failures in the same mode can send the stored trace to Slack or PagerDuty.
+
+```mermaid
+sequenceDiagram
+    participant Agent as Traced agent
+    participant SDK as AgentICU SDK
+    participant Collector as Collector and worker
+    participant Store as Trace store
+
+    Agent->>SDK: Raise a Step Repetition error
+    SDK->>SDK: Classify as MAST 1.3 and select a playbook
+    SDK->>Agent: Pass the directive to on_failure
+    Agent-->>SDK: Apply the directive and allow a retry
+    SDK->>Agent: Retry from the saved checkpoint
+    Agent-->>SDK: Return the recovered result
+    SDK->>Collector: Export the trace and recovery event
+    Collector->>Store: Save the failure and recovered outcome
+```
 
 ## Run the collector
 
